@@ -2,12 +2,15 @@
 Server builder for fluent configuration API.
 
 Enables clean, composable server configuration:
-    load_server("cmd").disable('sampling').timeout(30)
+    load_server("cmd").with_config(my_config)
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, List
+from typing import Any, Callable, Optional, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import StdioConfig
 
 
 class ServerBuilder:
@@ -38,6 +41,7 @@ class ServerBuilder:
         self._allow_elicitation: bool = False  # Default: disabled
         self._auto_auth: bool = True
         self._timeout: float = 30.0
+        self._config: Optional["StdioConfig"] = None  # Transport config
         self._server: Any = None  # Lazily loaded
     
     def headers(self, headers: dict[str, str]) -> ServerBuilder:
@@ -107,6 +111,30 @@ class ServerBuilder:
         self._on_elicitation = handler
         return self
     
+    def with_config(self, config: "StdioConfig | str") -> ServerBuilder:
+        """
+        Apply transport configuration.
+        
+        Args:
+            config: StdioConfig object or config name to load
+        
+        Returns:
+            Self for chaining
+        
+        Example:
+            config = create_config("prod", transport_type="python")...init()
+            server = load_server("python server.py").with_config(config)
+            
+            # Or load by name
+            server = load_server("python server.py").with_config("prod")
+        """
+        if isinstance(config, str):
+            from .config import load_config
+            config = load_config(config)
+        
+        self._config = config
+        return self
+    
     def _ensure_loaded(self) -> Any:
         """Lazy-load the actual server on first use."""
         if self._server is None:
@@ -123,6 +151,7 @@ class ServerBuilder:
                 allow_elicitation=self._allow_elicitation,
                 auto_auth=self._auto_auth,
                 timeout=self._timeout,
+                config=self._config,  # Pass config
             )
         return self._server
     

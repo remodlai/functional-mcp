@@ -8,6 +8,7 @@ __version__ = "0.1.0"
 
 from .loader import load_server, load, aload_server, aload
 from .registry import register
+from .config import create_config, load_config, StdioConfig
 from .transformation import ArgTransform, transform_tool
 from .tools import Tool, ToolCollection, ToolSchema
 from .exceptions import (
@@ -25,6 +26,11 @@ __all__ = [
     # Compatibility aliases
     "load",
     "aload",
+    
+    # Configuration
+    "create_config",
+    "load_config",
+    "StdioConfig",
     
     # Registry
     "register",
