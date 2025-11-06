@@ -10,6 +10,7 @@ from .loader import load_server, load, aload_server, aload
 from .registry import register
 from .transformation import ArgTransform, transform_tool
 from .tools import Tool, ToolCollection, ToolSchema
+from .codegen import generate_types_file as generateTypes
 from .exceptions import (
     MCPConnectionError,
     MCPToolError,
@@ -33,6 +34,9 @@ __all__ = [
     "Tool",
     "ToolCollection", 
     "ToolSchema",
+    
+    # Code generation
+    "generateTypes",
     
     # Transformation (enhancement)
     "ArgTransform",

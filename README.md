@@ -39,10 +39,14 @@ search = server.tools.search
 print(search.name)          # "search"
 print(search.description)   # "Search for items..."
 print(search.schema.toDict())  # Full schema as dict
-result = search(query="test", limit=10)
 
-# Or call directly
-result = server.search(query="test", limit=10)
+# Call and get hydrated Python objects (not just JSON!)
+result = search(query="test")
+# ↑ Returns real Python types:
+#   - datetime objects (not ISO strings)
+#   - UUID objects (not string IDs)  
+#   - Pydantic models (not dicts)
+#   - Primitives unwrapped (8 not {"result": 8})
 
 # Resources → attributes
 config = server.CONFIG  # Static resource
@@ -51,7 +55,7 @@ config = server.CONFIG  # Static resource
 prompt = server.format_prompt(style="formal")
 ```
 
-**Every tool is first-class. Full metadata. Clean access.**
+**Every tool is first-class. Hydrated objects. Full transparency.**
 
 ---
 
@@ -83,6 +87,43 @@ server = load_server("the-mcp-server")
 ```bash
 pip install functional-mcp
 ```
+
+---
+
+## Type Generation
+
+Generate typed interfaces from server schemas:
+
+```python
+from functional_mcp import load_server
+
+server = load_server("weather-server")
+
+# Generate Pydantic models
+server.tools.generateTypes(
+    path='./types/weather.py',
+    format='pydantic',        # or 'dataclass', 'typescript'
+    only='input',             # or 'output', None for both
+    with_instructions=True    # Include docstrings
+)
+
+# Creates:
+# class GetForecastInput(BaseModel):
+#     '''Get weather forecast for a location.'''
+#     lat: float = Field(description='Latitude')
+#     lon: float = Field(description='Longitude')
+#     units: str = Field(default='metric')
+
+# Now use with full type safety
+from types.weather import GetForecastInput
+
+forecast_input = GetForecastInput(lat=25.76, lon=-80.19)
+result = server.get_forecast(**forecast_input.model_dump())
+```
+
+**Formats:** Pydantic (validation), dataclass (lightweight), TypeScript (frontend)
+
+**When to use:** Type-safe workflows, team collaboration, frontend integration
 
 ---
 

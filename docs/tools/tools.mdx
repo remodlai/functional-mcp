@@ -1,0 +1,472 @@
+---
+title: Tool Operations
+sidebarTitle: Tools
+description: Access MCP server tools as Python functions with full metadata and type generation
+icon: wrench
+---
+
+Tools in functional-mcp are first-class objects that wrap MCP server tools with metadata, schema access, and callable interfaces.
+
+## Accessing Tools
+
+### By Name
+
+Unlike other MCP clients that force index-based iteration, functional-mcp provides name-based access:
+
+```python
+from functional_mcp import load_server
+
+server = load_server("npx weather-server")
+
+# Access tool by name (not index)
+forecast = server.tools.get_forecast
+
+# Inspect metadata
+print(forecast.name)         # "get_forecast"
+print(forecast.description)  # "Retrieve weather forecast..."
+print(forecast.tags)         # ["weather", "forecast"]
+```
+
+<Tip>
+Use `.get(name)` for safe access that returns `None` if the tool doesn't exist, or direct attribute access if you're certain the tool exists.
+</Tip>
+
+### Direct Method Calls
+
+Tools are also available as methods on the server object:
+
+```python
+# Call directly on server
+result = server.get_forecast(lat=25.76, lon=-80.19)
+
+# Or via ToolCollection
+result = server.tools.get_forecast(lat=25.76, lon=-80.19)
+```
+
+Both approaches return the same hydrated Python objects.
+
+## Tool Metadata
+
+Each Tool object exposes complete metadata:
+
+```python
+tool = server.tools.search
+
+# Basic info
+tool.name          # "search"
+tool.description   # "Search for items in database"
+tool.instructions  # Alias for description
+
+# Schema details
+tool.schema.required_args  # ["query"]
+tool.schema.optional_args  # ["limit", "category"]
+tool.schema.input_schema   # Full JSON schema dict
+
+# Server metadata (if available)
+tool.tags  # ["search", "database"]
+tool.meta  # Complete meta dict
+```
+
+### Schema Introspection
+
+Use `.schema.toDict()` to get the complete schema as a dictionary:
+
+```python
+schema = tool.schema.toDict()
+
+# Returns:
+# {
+#     "name": "search",
+#     "description": "Search for items...",
+#     "inputSchema": {...},
+#     "required": ["query"],
+#     "optional": ["limit", "category"]
+# }
+```
+
+<Note>
+Schema introspection is critical for building dynamic UIs, validating compatibility before agent assignment, or querying tool requirements programmatically.
+</Note>
+
+## Executing Tools
+
+### Basic Execution
+
+Call tools like regular Python functions:
+
+```python
+# Simple call
+result = server.search(query="test", limit=10)
+
+# Via ToolCollection
+search_tool = server.tools.search
+result = search_tool(query="test", limit=10)
+```
+
+Results are automatically hydrated into Python objects:
+
+```python
+weather = server.get_weather(city="London")
+
+# Returns typed objects, not JSON:
+weather.timestamp    # datetime(2024, 1, 15, 14, 30)
+weather.station_id   # UUID('123e4567-...')
+weather.temperature  # 20.5 (float)
+```
+
+<Tip>
+The underlying client automatically deserializes JSON strings into Python types based on the tool's output schema. This includes datetime objects, UUIDs, and custom Pydantic models.
+</Tip>
+
+### Primitive Unwrapping
+
+Tools that return primitive values are automatically unwrapped:
+
+```python
+total = server.calculate_sum(a=5, b=3)
+# Returns: 8 (not {"result": 8})
+```
+
+This happens automatically for `int`, `str`, `bool`, and `float` return types.
+
+## Type Generation
+
+Generate typed interfaces from tool schemas:
+
+```python
+server = load_server("weather-server")
+
+# Generate Pydantic models
+server.tools.generateTypes(
+    path='./types/weather.py',
+    format='pydantic',
+    only='input',
+    with_instructions=True
+)
+```
+
+<Steps>
+<Step title="Choose format">
+    Select the type format based on your use case:
+    - `pydantic`: Full validation with Field descriptions
+    - `dataclass`: Lightweight with type hints
+    - `typescript`: Frontend integration
+</Step>
+
+<Step title="Specify scope">
+    Use `only` parameter to control what gets generated:
+    - `only='input'`: Only input types
+    - `only='output'`: Only output types  
+    - `only=None`: Both input and output (default)
+</Step>
+
+<Step title="Use generated types">
+    Import and use with full IDE support:
+    
+    ```python
+    from types.weather import GetForecastInput
+    
+    # Full validation and autocomplete
+    params = GetForecastInput(lat=25.76, lon=-80.19)
+    result = server.get_forecast(**params.model_dump())
+    ```
+    
+    <Check>
+    Your IDE now has full autocomplete and type checking for all tool parameters.
+    </Check>
+</Step>
+</Steps>
+
+### Generated Type Examples
+
+<Tabs>
+<Tab title="Pydantic">
+```python weather_types.py
+from pydantic import BaseModel, Field
+from typing import Optional
+
+class GetForecastInput(BaseModel):
+    '''Get weather forecast for a location.'''
+    
+    lat: float = Field(description='Latitude coordinate')
+    lon: float = Field(description='Longitude coordinate')  
+    units: Optional[str] = Field(default='metric', description='Temperature units')
+```
+</Tab>
+
+<Tab title="Dataclass">
+```python weather_types.py
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class GetForecastInput:
+    '''Get weather forecast for a location.'''
+    lat: float
+    lon: float
+    units: Optional[str] = 'metric'
+```
+</Tab>
+
+<Tab title="TypeScript">
+```typescript weather.ts
+/** Get weather forecast for a location. */
+export interface GetForecastInput {
+  /** Latitude coordinate */
+  lat: number;
+  /** Longitude coordinate */
+  lon: number;
+  /** Temperature units */
+  units?: string;
+}
+```
+</Tab>
+</Tabs>
+
+<Warning>
+Generated types are overwritten each time you run `generateTypes()`. Don't manually edit generated files - your changes will be lost.
+</Warning>
+
+## Listing and Filtering
+
+### List All Tools
+
+```python
+tools = server.tools
+
+# Get all tool names
+tool_names = tools.list()
+# ['search', 'upload_file', 'delete_item', ...]
+
+# Iterate over tools
+for tool in tools:
+    print(f"{tool.name}: {tool.description}")
+    print(f"  Required: {tool.schema.required_args}")
+```
+
+### Filter by Criteria
+
+```python
+# Find tools with <= 2 required args (simpler for LLMs)
+simple_tools = [
+    tool for tool in server.tools
+    if len(tool.schema.required_args) <= 2
+]
+
+# Find search-related tools
+search_tools = [
+    tool for tool in server.tools
+    if "search" in tool.name.lower()
+]
+
+# Find tools by tag (if server provides tags)
+analysis_tools = [
+    tool for tool in server.tools
+    if "analysis" in tool.tags
+]
+```
+
+<Note>
+Tag availability depends on the MCP server implementation. Servers built with compatible frameworks include tags in the `meta._fastmcp.tags` field.
+</Note>
+
+## AI Framework Integration
+
+### For DSPy
+
+```python
+import dspy
+from functional_mcp import load_server
+
+server = load_server("tools-server")
+
+# DSPy expects list of callables
+react = dspy.ReAct(
+    signature="query -> answer",
+    tools=server.tools.toList()
+)
+```
+
+### For Remodl Agents
+
+```python
+from remodl.agents import create_agent
+from functional_mcp import load_server
+
+server = load_server("tools-server")
+
+# Inspect before adding
+for tool in server.tools:
+    print(f"Adding {tool.name}: {tool.description}")
+
+# Create agent with tools
+agent = create_agent(
+    name="Assistant",
+    role="You help users accomplish tasks",
+    tools=server.tools.toList()
+)
+```
+
+<Tip>
+Inspect tools before adding to agents. Check `required_args` to ensure the agent can satisfy tool requirements, and review `description` to verify tool purpose matches agent role.
+</Tip>
+
+## Advanced Patterns
+
+### Dynamic Tool Loading
+
+```python
+# Load tools based on requirements
+required_capabilities = ["search", "upload", "analyze"]
+
+agent_tools = [
+    tool for tool in server.tools
+    if tool.name in required_capabilities
+]
+
+# Add only matched tools
+agent.add_tools([tool._executor for tool in agent_tools])
+```
+
+### Schema-Driven Validation
+
+```python
+tool = server.tools.process_data
+
+# Build args from schema
+args = {}
+for arg_name in tool.schema.required_args:
+    args[arg_name] = get_value_from_user(arg_name)
+
+# Validate presence before calling
+if set(args.keys()) >= set(tool.schema.required_args):
+    result = tool(**args)
+else:
+    print(f"Missing: {set(tool.schema.required_args) - set(args.keys())}")
+```
+
+### Tool Transformation for Agents
+
+```python
+from functional_mcp import ArgTransform, transform_tool
+
+# Generic tool has too many params for LLM
+original = server.tools.get_forecast
+
+# Simplify for agent
+agent_forecast = transform_tool(
+    original,
+    name="local_weather",
+    transform_args={
+        "lat": ArgTransform(hide=True, default=25.76),
+        "lon": ArgTransform(hide=True, default=-80.19),
+        "units": ArgTransform(hide=True, default="imperial"),
+    }
+)
+
+# Agent only sees:
+agent_forecast(when="tomorrow")  # One param instead of four
+```
+
+<Warning>
+Tool transformation creates a new tool wrapper. The original tool remains unchanged. If you need the transformed tool in multiple places, store it in a variable or register it.
+</Warning>
+
+## Error Handling
+
+Tools raise `MCPToolError` on execution failure:
+
+```python
+from functional_mcp import MCPToolError, MCPValidationError
+
+try:
+    result = server.risky_operation(data="test")
+except MCPValidationError as e:
+    # Missing required arguments
+    print(f"Validation error: {e}")
+    print(f"Missing args: {e.errors['missing']}")
+except MCPToolError as e:
+    # Tool execution failed
+    print(f"Tool '{e.tool_name}' failed: {e}")
+    if e.original_error:
+        print(f"Underlying error: {e.original_error}")
+```
+
+<Note>
+`MCPValidationError` is raised before tool execution if required arguments are missing. `MCPToolError` is raised during execution if the tool itself fails.
+</Note>
+
+## Best Practices
+
+### Inspect Before Use
+
+```python
+# Check what tool needs before calling
+tool = server.tools.unknown_tool
+print(f"Required: {tool.schema.required_args}")
+print(f"Optional: {tool.schema.optional_args}")
+
+# Read the description
+print(f"Purpose: {tool.description}")
+```
+
+### Use Type Generation for Teams
+
+```python
+# Generate once, commit to repo
+server.tools.generateTypes(
+    path='./shared/types/api_types.py',
+    format='pydantic',
+    with_instructions=True
+)
+
+# Team gets full type safety
+from shared.types.api_types import SearchInput
+params = SearchInput(query="test", limit=10)
+```
+
+### Handle Missing Tools Gracefully
+
+```python
+# Safe access
+search = server.tools.get("search")
+if search:
+    result = search(query="test")
+else:
+    print("Search tool not available on this server")
+```
+
+### Transform for Simplicity
+
+When building agents, simplify tools by hiding infrastructure parameters:
+
+```python
+# Before: LLM needs to provide 6 parameters
+# After: LLM only provides 2 relevant parameters
+
+transformed = transform_tool(
+    original,
+    transform_args={
+        "api_key": ArgTransform(hide=True, default=API_KEY),
+        "region": ArgTransform(hide=True, default="us-east-1"),
+        "timeout": ArgTransform(hide=True, default=30),
+        "retry": ArgTransform(hide=True, default=True),
+    }
+)
+```
+
+This reduces cognitive load on LLMs and prevents tool misuse.
+
+## Limitations
+
+**Type generation requires schemas:** If a server doesn't provide `inputSchema`, type generation will create minimal stubs.
+
+**Transformation is shallow:** You can't modify tool logic, only its interface. For complex behavior changes, wrap the tool in a custom function.
+
+**Name collisions:** If multiple servers have tools with the same name, use transformation to rename one.
+
+## Next Steps
+
+- See [Resources](/docs/resources) for accessing server-side data
+- See [Prompts](/docs/prompts) for working with prompt templates
+- See [Type Generation Examples](/examples/type-generation) for complete codegen workflows
