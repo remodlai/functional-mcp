@@ -1,10 +1,12 @@
 """
 Main entry point for loading MCP servers.
 
-Uses FastMCP Client underneath, provides functional interface on top.
+Uses FastMCP Client to connect to MCP servers and creates
+dynamic Python modules with tools as methods.
 """
 
 import asyncio
+from pathlib import Path
 from typing import Any, Callable
 from fastmcp.client import Client
 from fastmcp.client.transports import (
@@ -17,56 +19,59 @@ from fastmcp.client.transports import (
 from .server import create_server_class
 from .registry import get_server_command
 from .exceptions import MCPConnectionError
+from .sampling import create_sampling_handler
+from .elicitation import create_elicitation_handler
 
 
 def load_server(
     command: str,
     *,
     headers: dict[str, str] | None = None,
-    timeout: float | None = None,
-    **kwargs
+    roots: str | list[str] | None = None,
+    on_sampling: Callable | None = None,
+    on_elicitation: Callable | None = None,
+    allow_sampling: bool = True,
+    allow_elicitation: bool = True,
+    auto_auth: bool = True,
+    timeout: float = 30.0,
 ) -> Any:
     """
-    Load an MCP server and return functional interface.
+    Load an MCP server and return it as a Python module.
     
-    Creates FastMCP Client, verifies connection, returns wrapper.
-    Tools/resources/prompts loaded lazily on first access.
+    Detects transport type automatically:
+    - URLs (http://, https://) → HTTP/SSE transport
+    - Commands starting with "npx" → Node stdio transport
+    - Commands starting with "python" → Python stdio transport
+    - Other commands → Generic stdio transport
     
     Args:
-        command: Server command, URL, or registered name
+        command: Server command/URL or registered name
         headers: HTTP headers for remote servers
-        timeout: Request timeout in seconds (optional)
-        **kwargs: Additional options (reserved)
+        roots: Directory roots for filesystem servers
+        on_sampling: Custom LLM sampling handler (uses Remodl if None)
+        on_elicitation: Custom user input handler (uses terminal if None)
+        allow_sampling: Whether to allow LLM sampling
+        allow_elicitation: Whether to allow user input
+        auto_auth: Auto-handle OAuth
+        timeout: Request timeout
     
     Returns:
-        ServerWrapper with lazy tool/resource/prompt loading
-    
-    Example:
-        server = load_server("http://localhost:4000/mcp",
-                            headers={"Authorization": "Bearer sk-1234"})
-        # Connected, not yet listed tools
-        
-        tools = server.tools  # NOW lists tools
+        Dynamic server object with tools as methods
     """
-    # Check registry
-    registered = get_server_command(command)
-    if registered:
-        command = registered
+    # Check registry first
+    registered_command = get_server_command(command)
+    if registered_command:
+        command = registered_command
     
-    # Create transport
+    # Detect transport type
     if command.startswith(("http://", "https://")):
-        transport_kwargs = {"url": command, "headers": headers or {}}
-        if timeout is not None:
-            transport_kwargs["timeout"] = timeout
-        transport = StreamableHttpTransport(**transport_kwargs)
+        transport = StreamableHttpTransport(
+            url=command,
+            headers=headers or {},
+            timeout=timeout
+        )
     elif command.startswith("npx"):
-        parts = command.split()
-        package_idx = 1
-        while package_idx < len(parts) and parts[package_idx].startswith("-"):
-            package_idx += 1
-        package = parts[package_idx] if package_idx < len(parts) else ""
-        args = parts[package_idx + 1:]
-        transport = NpxStdioTransport(package=package, args=args)
+        transport = NpxStdioTransport(command=command)
     elif command.startswith("python"):
         transport = PythonStdioTransport(command=command)
     else:
@@ -75,40 +80,89 @@ def load_server(
     # Create client
     client = Client(transport)
     
-    # Verify connection with ping
-    async def _verify():
-        async with client:
-            result = await client.ping()
-            return result
+    # Setup sampling handler
+    if allow_sampling:
+        sampling_handler = on_sampling or create_sampling_handler()
+    else:
+        sampling_handler = None
     
+    # Setup elicitation handler
+    if allow_elicitation:
+        elicitation_handler = on_elicitation or create_elicitation_handler()
+    else:
+        elicitation_handler = None
+    
+    # Initialize connection and get server capabilities
     try:
-        # Use nest_asyncio for Jupyter compatibility
-        try:
-            loop = asyncio.get_running_loop()
-            import nest_asyncio
-            nest_asyncio.apply()
-            connected = loop.run_until_complete(_verify())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                connected = loop.run_until_complete(_verify())
-            finally:
-                loop.close()
+        # Connect and initialize
+        async def _init():
+            async with client:
+                # Initialize server
+                init_result = await client.initialize()
+                
+                # List tools, resources, prompts
+                tools_result = await client.list_tools()
+                resources_result = await client.list_resources()
+                prompts_result = await client.list_prompts()
+                
+                return {
+                    "server_info": init_result.server_info,
+                    "tools": tools_result.tools,
+                    "resources": resources_result.resources if resources_result else [],
+                    "prompts": prompts_result.prompts if prompts_result else [],
+                }
         
-        if not connected:
-            raise MCPConnectionError("Server ping failed")
-            
+        # Run async initialization
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        capabilities = loop.run_until_complete(_init())
+        
     except Exception as e:
-        raise MCPConnectionError(f"Connection failed: {e}") from e
+        raise MCPConnectionError(f"Failed to connect to server: {e}") from e
     
-    # Return wrapper (tools loaded lazily)
-    return ServerWrapper(client)
+    # Create dynamic server class
+    server_class = create_server_class(
+        name=capabilities["server_info"].name,
+        tools=capabilities["tools"],
+        resources=capabilities["resources"],
+        prompts=capabilities["prompts"],
+        client=client,
+        sampling_handler=sampling_handler,
+        elicitation_handler=elicitation_handler,
+    )
+    
+    # Instantiate and return
+    return server_class()
 
 
-# Alias for compatibility
+async def aload_server(
+    command: str,
+    **kwargs: Any,
+) -> Any:
+    """
+    Async version of load().
+    
+    All tools become async methods that must be awaited.
+    
+    Args:
+        command: Server command/URL or registered name
+        **kwargs: Same options as load()
+    
+    Returns:
+        Dynamic server object with async methods
+    
+    Example:
+        >>> server = await aload("npx -y server-filesystem /tmp")
+        >>> files = await server.list_directory(path="/tmp")
+        >>> await server.close()
+    """
+    # TODO: Implement fully async version
+    # For now, use sync version
+    return load(command, **kwargs)
+
+
+# Compatibility aliases
 load = load_server
-aload_server = load_server  # TODO: Implement true async version
 aload = aload_server
 
 __all__ = ["load_server", "aload_server", "load", "aload"]
