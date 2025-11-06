@@ -1,0 +1,425 @@
+---
+title: Transport Detection
+description: How functional-mcp automatically detects and connects to different MCP server types
+sidebar_position: 4
+---
+
+# Transport Detection
+
+functional-mcp automatically detects the correct transport mechanism based on how you specify the server. No configuration needed - just pass a command or URL.
+
+## Supported Transports
+
+functional-mcp supports four transport types, all auto-detected:
+
+| Transport | Use Case | Detection Pattern |
+|-----------|----------|-------------------|
+| **StdioTransport** | Generic subprocess | Default for commands |
+| **NpxStdioTransport** | Node.js via npx | Starts with `"npx"` |
+| **PythonStdioTransport** | Python scripts | Starts with `"python"` |
+| **StreamableHttpTransport** | Remote HTTP/SSE | Starts with `http://` or `https://` |
+
+## Detection Algorithm
+
+When you call `load_server()`, functional-mcp analyzes the command string:
+
+```python
+def detect_transport(command: str):
+    """Auto-detect transport type from command."""
+
+    # HTTP/HTTPS URLs → StreamableHttpTransport
+    if command.startswith("http://") or command.startswith("https://"):
+        return StreamableHttpTransport(url=command)
+
+    # NPX commands → NpxStdioTransport
+    if command.startswith("npx"):
+        args = command.split()[1:]  # Remove "npx"
+        return NpxStdioTransport(args=args)
+
+    # Python commands → PythonStdioTransport
+    if command.startswith("python"):
+        args = command.split()[1:]  # Remove "python"
+        return PythonStdioTransport(args=args)
+
+    # Everything else → StdioTransport
+    parts = command.split()
+    return StdioTransport(command=parts[0], args=parts[1:])
+```
+
+## Transport Details
+
+### StdioTransport (Generic Subprocess)
+
+For any executable or binary that speaks MCP over stdio.
+
+**Example:**
+```python
+# Shell script
+server = load_server("./my-mcp-server.sh --config prod")
+
+# Binary
+server = load_server("/usr/local/bin/mcp-tool")
+
+# Any command
+server = load_server("ruby mcp_server.rb")
+```
+
+**How it works:**
+1. Spawns subprocess with the command
+2. Communicates via stdin/stdout
+3. Reads/writes JSON-RPC messages
+4. Manages process lifecycle
+
+**Use when:** You have a custom MCP server binary or script
+
+### NpxStdioTransport (Node.js)
+
+Optimized for Node.js packages via npx.
+
+**Example:**
+```python
+# Run npm package without installing
+server = load_server("npx -y @modelcontextprotocol/server-filesystem /tmp")
+
+# Specific version
+server = load_server("npx -y @modelcontextprotocol/server-filesystem@1.0.0 /tmp")
+
+# With arguments
+server = load_server("npx my-mcp-server --verbose --port 3000")
+```
+
+**How it works:**
+1. Detects `npx` prefix
+2. Uses NpxStdioTransport from FastMCP
+3. Automatically installs package if needed
+4. Runs with specified arguments
+
+**Benefits:**
+- No pre-installation needed
+- Version control per-call
+- Automatic cleanup
+
+**Use when:** Using Node.js MCP servers from npm
+
+### PythonStdioTransport (Python Scripts)
+
+Optimized for Python-based MCP servers.
+
+**Example:**
+```python
+# Python script
+server = load_server("python my_mcp_server.py")
+
+# With arguments
+server = load_server("python server.py --config dev.yaml")
+
+# Specific Python version
+server = load_server("python3.12 server.py")
+```
+
+**How it works:**
+1. Detects `python` prefix
+2. Uses PythonStdioTransport from FastMCP
+3. Spawns Python interpreter
+4. Runs script with arguments
+
+**Use when:** You have a Python-based MCP server
+
+### StreamableHttpTransport (Remote Servers)
+
+For remote MCP servers over HTTP/SSE.
+
+**Example:**
+```python
+# Basic HTTP
+server = load_server("https://api.example.com/mcp")
+
+# With authentication
+server = load_server(
+    "https://api.example.com/mcp",
+    headers={"Authorization": "Bearer token123"}
+)
+
+# OAuth (opens browser automatically)
+server = load_server(
+    "https://api.example.com/mcp",
+    auth="oauth"
+)
+```
+
+**How it works:**
+1. Detects HTTP(S) URL
+2. Uses StreamableHttpTransport from FastMCP
+3. Establishes SSE or WebSocket connection
+4. Sends HTTP requests for tool calls
+
+**Use when:** Connecting to remote/cloud MCP servers
+
+## Authentication
+
+Different transports support different auth methods:
+
+### HTTP Transport Auth
+
+**Bearer Token:**
+```python
+server = load_server(
+    "https://api.example.com/mcp",
+    headers={"Authorization": "Bearer your-token"}
+)
+```
+
+**Custom Headers:**
+```python
+server = load_server(
+    "https://api.example.com/mcp",
+    headers={
+        "X-API-Key": "key123",
+        "X-Client-ID": "client456"
+    }
+)
+```
+
+**OAuth (PKCE Flow):**
+```python
+server = load_server(
+    "https://api.example.com/mcp",
+    auth="oauth"
+)
+# Browser opens automatically for login
+# Tokens stored in ~/.config/functional-mcp/tokens.json
+```
+
+### Stdio Transport Auth
+
+For stdio transports, pass credentials via arguments or environment:
+
+```python
+import os
+
+# Via environment
+os.environ["API_KEY"] = "secret123"
+server = load_server("npx my-server")
+
+# Via arguments
+server = load_server("npx my-server --api-key secret123")
+```
+
+## Advanced Configuration
+
+### Custom Transport
+
+Pass a FastMCP transport directly for advanced cases:
+
+```python
+from fastmcp.transports import StdioTransport
+from functional_mcp import load_server
+
+# Create custom transport
+transport = StdioTransport(
+    command="./my-server",
+    args=["--verbose"],
+    env={"DEBUG": "true"}
+)
+
+# Use it
+server = load_server(transport=transport)
+```
+
+### Connection Options
+
+Configure connection behavior:
+
+```python
+# Timeout for connection
+server = load_server(
+    "npx my-server",
+    timeout=30  # seconds
+)
+
+# Custom roots (for filesystem servers)
+server = load_server(
+    "npx @modelcontextprotocol/server-filesystem",
+    roots=["/tmp", "/home/user/data"]
+)
+```
+
+## Transport Lifecycle
+
+### Initialization
+
+```python
+server = load_server("npx my-server")
+```
+
+**What happens:**
+1. Parse command string
+2. Detect transport type
+3. Create transport instance
+4. Start subprocess (stdio) or connect (HTTP)
+5. Initialize MCP protocol handshake
+6. Query server capabilities
+7. Generate Python class
+8. Return server instance
+
+### Communication
+
+```python
+result = server.search(query="test")
+```
+
+**What happens:**
+1. Serialize arguments to JSON
+2. Send JSON-RPC request via transport
+3. Wait for response
+4. Deserialize response
+5. Hydrate Python objects
+6. Return result
+
+### Cleanup
+
+```python
+del server  # or script ends
+```
+
+**What happens:**
+1. Close transport connection
+2. Terminate subprocess (if stdio)
+3. Clean up resources
+4. Release file handles
+
+## Debugging Transport Issues
+
+### Check Connection
+
+```python
+from functional_mcp import MCPConnectionError
+
+try:
+    server = load_server("npx my-server")
+except MCPConnectionError as e:
+    print(f"Failed to connect: {e}")
+    print("Check that:")
+    print("  - npx is installed")
+    print("  - Server package exists")
+    print("  - Network is available (for HTTP)")
+```
+
+### Verbose Logging
+
+Enable logging to see transport details:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+server = load_server("npx my-server")
+# See all transport communication
+```
+
+### Test Transport Manually
+
+Test the command works outside Python:
+
+```bash
+# For npx
+npx -y @modelcontextprotocol/server-filesystem /tmp
+
+# For Python
+python my_server.py
+
+# For HTTP
+curl https://api.example.com/mcp
+```
+
+## Common Patterns
+
+### Local Development Server
+
+```python
+# Use Python server during development
+dev_server = load_server("python dev_server.py --debug")
+
+# Switch to npx package for production
+prod_server = load_server("npx my-mcp-server")
+```
+
+### Multi-Server Setup
+
+```python
+# Different transports, same code
+local_fs = load_server("npx @modelcontextprotocol/server-filesystem /tmp")
+remote_api = load_server("https://api.example.com/mcp")
+custom_tool = load_server("./my-binary --mcp")
+
+# Use them identically
+local_files = local_fs.list_directory(path="/tmp")
+remote_data = remote_api.fetch_data(id="123")
+custom_result = custom_tool.process(data="...")
+```
+
+### Fallback Strategy
+
+```python
+from functional_mcp import MCPConnectionError
+
+def load_with_fallback():
+    """Try remote, fallback to local."""
+    try:
+        return load_server("https://api.example.com/mcp")
+    except MCPConnectionError:
+        print("Remote unavailable, using local...")
+        return load_server("python local_server.py")
+
+server = load_with_fallback()
+```
+
+## Best Practices
+
+### 1. Use NPX for Node Packages
+
+```python
+# Good - no installation needed
+server = load_server("npx -y @modelcontextprotocol/server-filesystem /tmp")
+
+# Avoid - requires pre-installation
+# npm install -g @modelcontextprotocol/server-filesystem
+# server = load_server("mcp-filesystem /tmp")
+```
+
+### 2. Specify Full Paths for Binaries
+
+```python
+# Good - explicit and clear
+server = load_server("/usr/local/bin/my-mcp-server")
+
+# Risky - depends on PATH
+server = load_server("my-mcp-server")
+```
+
+### 3. Use Environment for Secrets
+
+```python
+import os
+
+# Good - secrets in environment
+os.environ["API_KEY"] = load_secret()
+server = load_server("npx my-server")
+
+# Bad - secrets in command
+server = load_server("npx my-server --api-key secret123")
+```
+
+### 4. Test Commands First
+
+```bash
+# Test the command works before using in Python
+npx -y @modelcontextprotocol/server-filesystem /tmp
+# If this works, load_server() will work
+```
+
+## Next Steps
+
+- **[Loading Servers Guide](/docs/guides/loading-servers)** - Detailed loading patterns
+- **[Authentication Guide](/docs/guides/authentication)** - Auth strategies
+- **[Error Handling](/docs/guides/error-handling)** - Handle connection issues

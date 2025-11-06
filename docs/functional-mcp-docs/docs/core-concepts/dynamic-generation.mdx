@@ -1,0 +1,400 @@
+---
+title: Dynamic Class Generation
+description: How functional-mcp creates Python classes at runtime
+sidebar_position: 3
+---
+
+# Dynamic Class Generation
+
+functional-mcp generates Python classes at runtime using Python's `type()` function. This allows any MCP server to become a native Python module without manual schema definitions.
+
+## The Problem
+
+Each MCP server is unique with different tools, resources, and prompts. Pre-defining classes for every possible server is impossible.
+
+**Solution:** Generate classes dynamically based on server capabilities.
+
+## How It Works
+
+### Step 1: Query Server Capabilities
+
+```python
+# When you call load_server()
+server = load_server("npx my-server")
+
+# functional-mcp asks the server:
+# - What tools do you provide?
+# - What resources do you have?
+# - What prompts can you format?
+```
+
+### Step 2: Build Class Components
+
+From the server's response, functional-mcp creates:
+
+```python
+# Methods for each tool
+def search(self, query: str, limit: int = 10):
+    """Search for items in the database."""
+    return self._client.call_tool("search", {
+        "query": query,
+        "limit": limit
+    })
+
+# ToolCollection for metadata
+tools = ToolCollection({
+    "search": Tool(name="search", schema=..., ...)
+})
+
+# Properties for resources
+@property
+def CONFIG(self):
+    """Get CONFIG resource."""
+    return self._client.read_resource("config://app")
+
+# Functions for prompts
+def format_email(self, tone: str = "formal"):
+    """Format email prompt."""
+    return self._client.get_prompt("format_email", {"tone": tone})
+```
+
+### Step 3: Generate Class with type()
+
+```python
+# Python's type() creates classes at runtime
+ServerClass = type(
+    'WeatherServer',           # Class name
+    (object,),                 # Base classes
+    {
+        # Methods
+        'get_forecast': get_forecast_method,
+        'search': search_method,
+
+        # ToolCollection
+        'tools': tool_collection,
+
+        # Properties
+        'CONFIG': config_property,
+
+        # Prompts
+        'format_email': format_email_func,
+
+        # Private attributes
+        '_client': client,
+    }
+)
+```
+
+### Step 4: Return Instance
+
+```python
+# Create and return instance
+return ServerClass()
+```
+
+## Snake Case Conversion
+
+MCP tools often use camelCase. functional-mcp converts to Pythonic snake_case:
+
+```python
+# MCP tool names → Python method names
+"getWeatherForecast"  → "get_weather_forecast"
+"searchDatabase"      → "search_database"
+"listUsers"           → "list_users"
+"createNewProject"    → "create_new_project"
+```
+
+**Algorithm:**
+```python
+def to_snake_case(name: str) -> str:
+    # Insert underscore before uppercase letters
+    s = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    s = re.sub('([a-z0-9])([A-Z])', r'\1_\2', s)
+    return s.lower()
+```
+
+## Type Hint Generation
+
+functional-mcp generates type hints from JSON Schema:
+
+### Simple Types
+
+```python
+# JSON Schema → Python Type
+{"type": "string"}   → str
+{"type": "integer"}  → int
+{"type": "number"}   → float
+{"type": "boolean"}  → bool
+{"type": "null"}     → None
+```
+
+### Complex Types
+
+```python
+# Arrays
+{"type": "array", "items": {"type": "string"}}
+→ list[str]
+
+# Objects
+{"type": "object"}
+→ dict[str, Any]
+
+# Unions
+{"anyOf": [{"type": "string"}, {"type": "null"}]}
+→ str | None
+```
+
+### Example Method Generation
+
+```python
+# From this JSON Schema:
+{
+    "name": "search",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "limit": {"type": "integer"},
+            "include_archived": {"type": "boolean"}
+        },
+        "required": ["query"]
+    }
+}
+
+# Generates this method:
+def search(
+    self,
+    query: str,
+    limit: int | None = None,
+    include_archived: bool = False
+) -> dict[str, Any]:
+    """Search for items."""
+    ...
+```
+
+## Docstring Generation
+
+Each method gets a docstring from the tool description:
+
+```python
+def search(self, query: str, limit: int = 10):
+    """
+    Search for items in the database.
+
+    Performs a full-text search across all indexed fields.
+    """
+    ...
+```
+
+## Benefits of Dynamic Generation
+
+### 1. Universal Compatibility
+
+Works with **any** MCP server without configuration:
+
+```python
+# Filesystem server
+fs = load_server("npx @modelcontextprotocol/server-filesystem /tmp")
+
+# Database server
+db = load_server("python database_server.py")
+
+# Custom server
+custom = load_server("./my-binary --mcp")
+```
+
+All get the same treatment - automatic conversion to Python.
+
+### 2. Always In Sync
+
+No schema drift. The generated class always matches the server:
+
+```python
+# Server adds new tool
+# Next load_server() call → new method available
+# No code changes needed
+```
+
+### 3. IDE Support
+
+Despite being dynamic, IDEs work perfectly:
+
+- **Autocomplete** from type hints
+- **Inline docs** from docstrings
+- **Type checking** from hints
+- **Go-to-definition** works
+
+### 4. No Boilerplate
+
+Zero manual code:
+
+```python
+# Instead of writing this for every server:
+class WeatherServer:
+    def __init__(self):
+        self.client = MCPClient(...)
+
+    def get_forecast(self, lat, lon):
+        return self.client.call("getForecast", {...})
+
+# Just write:
+server = load_server("npx weather-server")
+```
+
+## Implementation Details
+
+### Method Factory Pattern
+
+Each tool becomes a method using a factory:
+
+```python
+def create_tool_method(tool_name: str, schema: dict):
+    """Create a method for a tool."""
+
+    def method(self, **kwargs):
+        # Validate arguments
+        validate_args(kwargs, schema)
+
+        # Serialize complex types
+        serialized = serialize_args(kwargs)
+
+        # Call tool via client
+        return self._client.call_tool(tool_name, serialized)
+
+    # Add metadata
+    method.__name__ = to_snake_case(tool_name)
+    method.__doc__ = schema.get("description", "")
+
+    # Add type hints
+    annotations = generate_annotations(schema)
+    method.__annotations__ = annotations
+
+    return method
+```
+
+### Resource Property Factory
+
+Resources become properties:
+
+```python
+def create_resource_property(uri: str):
+    """Create a property for a resource."""
+
+    @property
+    def resource_prop(self):
+        # Lazy load resource
+        return self._client.read_resource(uri)
+
+    return resource_prop
+```
+
+### Prompt Function Factory
+
+Prompts become functions:
+
+```python
+def create_prompt_function(prompt_name: str, schema: dict):
+    """Create a function for a prompt."""
+
+    def prompt_func(self, **kwargs):
+        return self._client.get_prompt(prompt_name, kwargs)
+
+    prompt_func.__name__ = to_snake_case(prompt_name)
+    prompt_func.__doc__ = schema.get("description", "")
+
+    return prompt_func
+```
+
+## Limitations
+
+### 1. No Static Analysis Pre-Load
+
+IDEs can't see methods until `load_server()` runs:
+
+```python
+# This won't autocomplete before running:
+server = load_server("npx my-server")
+server.search(...)  # IDE needs to execute load_server first
+```
+
+**Workaround:** Generate type stubs:
+
+```python
+server.generate_stubs(path="./stubs/my_server.pyi")
+# Now IDE can read stubs for autocomplete
+```
+
+### 2. Dynamic Overhead
+
+Small overhead from dynamic generation:
+
+```python
+import time
+
+start = time.time()
+server = load_server("npx my-server")
+print(f"Load time: {time.time() - start}s")
+# Typically: 0.1-0.5 seconds
+```
+
+For most use cases, this is negligible.
+
+### 3. Class Names
+
+All generated classes are named generically:
+
+```python
+print(type(server).__name__)  # "MCPServer"
+```
+
+Not usually an issue, but worth knowing for debugging.
+
+## Best Practices
+
+### 1. Cache Server Objects
+
+Don't reload unnecessarily:
+
+```python
+# Bad - reloads every function call
+def search(query):
+    server = load_server("npx my-server")  # Slow!
+    return server.search(query=query)
+
+# Good - load once
+server = load_server("npx my-server")
+
+def search(query):
+    return server.search(query=query)
+```
+
+### 2. Use Type Stubs for Large Projects
+
+Generate stubs for better IDE support:
+
+```python
+server = load_server("npx my-server")
+server.generate_stubs("./types/my_server.pyi")
+```
+
+### 3. Explore Tools Programmatically
+
+Use ToolCollection for discovery:
+
+```python
+server = load_server("npx my-server")
+
+# See what's available
+print("Tools:", server.tools.list())
+
+# Introspect before calling
+for tool_name in server.tools.list():
+    tool = getattr(server.tools, tool_name)
+    print(f"{tool.name}: {tool.description}")
+```
+
+## Next Steps
+
+- **[Transport Detection](/docs/core-concepts/transport-detection)** - How servers are connected
+- **[Type Generation](/docs/guides/type-generation)** - Generate type definitions
+- **[API Reference](/docs/api/loader)** - Complete loader API

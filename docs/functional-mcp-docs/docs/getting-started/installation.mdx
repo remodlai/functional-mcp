@@ -1,0 +1,71 @@
+---
+title: Installation
+description: Install functional-mcp and get ready to use any MCP server
+sidebar_position: 1
+---
+
+# Installation
+
+Get functional-mcp up and running in seconds.
+
+## Requirements
+
+- **Python 3.12 or higher**
+- pip or uv package manager
+
+## Install via pip
+
+```bash
+pip install functional-mcp
+```
+
+## Install via uv
+
+```bash
+uv pip install functional-mcp
+```
+
+## Install for Development
+
+If you want to contribute or modify functional-mcp:
+
+```bash
+# Clone the repository
+git clone https://github.com/remodl-ai/functional-mcp.git
+cd functional-mcp
+
+# Install with development dependencies
+pip install -e ".[dev]"
+```
+
+## Verify Installation
+
+Test that functional-mcp is installed correctly:
+
+```python
+from functional_mcp import load_server
+
+print("functional-mcp is ready!")
+```
+
+If this runs without errors, you're all set!
+
+## Dependencies
+
+functional-mcp automatically installs:
+
+- **fastmcp** (>=2.10.0) - Core MCP client
+- **pydantic** (>=2.0.0) - Data validation
+- **httpx** (>=0.27.0) - HTTP client for remote servers
+
+## Development Dependencies
+
+For development, you'll also get:
+
+- **pytest** (>=8.0.0) - Testing framework
+- **pytest-asyncio** (>=0.23.0) - Async test support
+- **mypy** (>=1.8.0) - Type checking
+
+## Next Steps
+
+Ready to load your first MCP server? Continue to the [Quickstart Guide](/docs/getting-started/quickstart).

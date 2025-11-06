@@ -1,0 +1,184 @@
+---
+title: Quickstart Guide
+description: Load your first MCP server and start using it in minutes
+sidebar_position: 2
+---
+
+# Quickstart Guide
+
+This guide will have you loading and using an MCP server in less than 5 minutes.
+
+## Your First MCP Server
+
+Let's load the filesystem MCP server - it provides tools for file operations.
+
+```python
+from functional_mcp import load_server
+
+# Load the filesystem server
+server = load_server("npx -y @modelcontextprotocol/server-filesystem /tmp")
+
+# List files in a directory
+files = server.list_directory(path="/tmp")
+print(files)
+
+# Read a file
+content = server.read_file(path="/tmp/example.txt")
+print(content)
+```
+
+**That's it!** The MCP server is now a Python module with working methods.
+
+## Understanding What Happened
+
+When you called `load_server()`, functional-mcp:
+
+1. **Detected the transport** - Recognized `npx` and set up stdio transport
+2. **Started the server** - Launched the MCP server as a subprocess
+3. **Queried capabilities** - Asked the server what tools it provides
+4. **Generated Python class** - Created a class with methods for each tool
+5. **Returned server object** - Gave you a ready-to-use Python object
+
+All of this happened automatically in milliseconds.
+
+## Exploring Server Capabilities
+
+Every loaded server exposes its tools, resources, and prompts:
+
+```python
+# See all available tools
+print(server.tools.list())  # ["list_directory", "read_file", "write_file", ...]
+
+# Access tool metadata
+list_tool = server.tools.list_directory
+print(list_tool.name)         # "list_directory"
+print(list_tool.description)  # "List contents of a directory"
+print(list_tool.schema.toDict())  # Full JSON schema
+```
+
+## Using Tools Two Ways
+
+functional-mcp provides two ways to use tools:
+
+### 1. Direct Method Call (Simple)
+
+```python
+# Just call it like a method
+files = server.list_directory(path="/tmp")
+```
+
+### 2. Via ToolCollection (With Metadata)
+
+```python
+# Access the tool object first
+list_tool = server.tools.list_directory
+
+# See what it needs
+print(list_tool.schema.required_args)  # ["path"]
+print(list_tool.schema.optional_args)  # []
+
+# Then call it
+files = list_tool(path="/tmp")
+```
+
+Both ways work identically - use whatever feels more natural!
+
+## Working with Different Server Types
+
+### Local Python Server
+
+```python
+server = load_server("python my_server.py")
+```
+
+### NPX/Node.js Server
+
+```python
+server = load_server("npx my-mcp-server")
+```
+
+### Remote HTTP Server
+
+```python
+server = load_server("https://api.example.com/mcp")
+```
+
+### With Authentication
+
+```python
+server = load_server(
+    "https://api.example.com/mcp",
+    headers={"Authorization": "Bearer your-token"}
+)
+```
+
+## Type Safety and IDE Support
+
+functional-mcp automatically generates type hints:
+
+```python
+# Your IDE will autocomplete these!
+server.list_directory(
+    path="/tmp"  # ← IDE knows this is required (str)
+)  # ← IDE knows return type
+```
+
+## Error Handling
+
+Handle errors gracefully:
+
+```python
+from functional_mcp import MCPToolError, MCPConnectionError
+
+try:
+    files = server.list_directory(path="/nonexistent")
+except MCPToolError as e:
+    print(f"Tool {e.tool_name} failed: {e}")
+except MCPConnectionError as e:
+    print(f"Server connection failed: {e}")
+```
+
+## Next Steps
+
+Now that you understand the basics:
+
+- **[Learn Core Concepts](/docs/core-concepts/architecture)** - Understand how functional-mcp works
+- **[Explore the API](/docs/api/loader)** - Dive deep into all available functions
+- **[See Examples](/docs/examples/basic-usage)** - Learn from real-world use cases
+
+## Common First Questions
+
+### How do I find MCP servers?
+
+Check out:
+- [Anthropic's MCP servers](https://github.com/modelcontextprotocol/servers)
+- [Awesome MCP](https://github.com/punkpeye/awesome-mcp)
+- npm search for "mcp-server"
+
+### Can I use multiple servers at once?
+
+Absolutely! Each `load_server()` call returns an independent server object:
+
+```python
+fs = load_server("npx @modelcontextprotocol/server-filesystem /tmp")
+db = load_server("python database_server.py")
+api = load_server("https://api.example.com/mcp")
+
+# Use them together
+files = fs.list_directory(path="/tmp")
+data = db.query(sql="SELECT * FROM users")
+result = api.process(data=data)
+```
+
+### What about async/await?
+
+Use `aload_server()` for async:
+
+```python
+from functional_mcp import aload_server
+
+server = await aload_server("npx my-server")
+files = await server.list_directory(path="/tmp")
+```
+
+See the [Async Usage Guide](/docs/guides/async-usage) for more.

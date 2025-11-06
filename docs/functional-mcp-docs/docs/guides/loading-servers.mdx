@@ -1,0 +1,339 @@
+---
+title: Loading Servers
+description: Complete guide to loading MCP servers with functional-mcp
+sidebar_position: 1
+---
+
+# Loading Servers
+
+This guide covers how to load MCP servers with functional-mcp, from basic commands to advanced configurations.
+
+## Basic Loading
+
+The simplest way to load a server is to pass a command string to `load_server()`:
+
+```python
+from functional_mcp import load_server
+
+# NPX package
+server = load_server("npx -y @modelcontextprotocol/server-filesystem /tmp")
+```
+
+functional-mcp automatically detects the transport type and handles all the connection details.
+
+:::tip
+The `-y` flag with npx automatically accepts any prompts, making the load non-interactive.
+:::
+
+## Transport Types
+
+functional-mcp supports four transport types, all auto-detected:
+
+```python
+# NPX (Node.js packages)
+server = load_server("npx -y @modelcontextprotocol/server-filesystem /tmp")
+
+# Python scripts
+server = load_server("python my_server.py")
+
+# Binary executables
+server = load_server("./my-mcp-binary --config prod")
+
+# Remote HTTP/SSE servers
+server = load_server("https://api.example.com/mcp")
+```
+
+See the [Transport Detection](/docs/core-concepts/transport-detection) guide for details on how detection works.
+
+## Server Registry
+
+Register servers once and load them by name anywhere in your codebase.
+
+### Registering Servers
+
+```python
+from functional_mcp import register
+
+register(
+    weather="npx -y @h1deya/mcp-server-weather",
+    filesystem="npx -y @modelcontextprotocol/server-filesystem /tmp",
+    database="python database_server.py"
+)
+```
+
+The registry is saved to `~/.config/functional-mcp/servers.json` and persists across Python sessions.
+
+### Loading by Name
+
+```python
+from functional_mcp import load_server
+
+# Load registered server by name
+weather = load_server("weather")
+fs = load_server("filesystem")
+```
+
+This makes your code portable and easier to configure across environments.
+
+## Authentication
+
+### HTTP Bearer Tokens
+
+For remote servers requiring authentication, pass headers:
+
+```python
+server = load_server(
+    "https://api.example.com/mcp",
+    headers={"Authorization": "Bearer your-token-here"}
+)
+```
+
+### OAuth Flow
+
+For OAuth-protected servers, specify the auth type:
+
+```python
+server = load_server(
+    "https://api.example.com/mcp",
+    auth="oauth"
+)
+```
+
+This opens your browser for authentication. Tokens are cached in `~/.config/functional-mcp/tokens.json` and refreshed automatically.
+
+:::warning
+Never hardcode tokens in your source code. Use environment variables or secure configuration management.
+:::
+
+## Advanced Configuration
+
+### Custom Roots
+
+Filesystem servers need explicit root directories for security:
+
+```python
+server = load_server(
+    "npx @modelcontextprotocol/server-filesystem",
+    roots=["/tmp", "/home/user/data"]
+)
+```
+
+The server can only access files within these directories.
+
+### Connection Timeout
+
+Set a custom timeout for slow-starting servers:
+
+```python
+server = load_server(
+    "npx slow-server",
+    timeout=60  # seconds
+)
+```
+
+### Disable Sampling and Elicitation
+
+Some MCP servers may request LLM sampling or user input. Disable these features:
+
+```python
+server = load_server(
+    "npx my-server",
+    allow_sampling=False,      # Disable LLM sampling
+    allow_elicitation=False    # Disable user prompts
+)
+```
+
+## Async Loading
+
+Use `aload_server()` for async/await workflows:
+
+```python
+from functional_mcp import aload_server
+
+async def main():
+    server = await aload_server("npx my-server")
+    result = await server.search(query="test")
+    return result
+```
+
+Load multiple servers concurrently:
+
+```python
+import asyncio
+from functional_mcp import aload_server
+
+async def load_all():
+    servers = await asyncio.gather(
+        aload_server("npx server1"),
+        aload_server("npx server2"),
+        aload_server("npx server3")
+    )
+    return servers
+```
+
+## Lifecycle Management
+
+### Context Manager
+
+Use a context manager for automatic cleanup:
+
+```python
+from functional_mcp import load_server
+
+with load_server("npx my-server") as server:
+    result = server.search(query="test")
+    # Server closed automatically after this block
+```
+
+### Manual Cleanup
+
+Close the server manually when done:
+
+```python
+server = load_server("npx my-server")
+
+try:
+    result = server.search(query="test")
+finally:
+    server.close()
+```
+
+### Long-Running Applications
+
+For applications that need to keep servers alive:
+
+```python
+class Application:
+    def __init__(self):
+        # Load once during startup
+        self.server = load_server("npx my-server")
+
+    def search(self, query: str):
+        return self.server.search(query=query)
+
+    def shutdown(self):
+        self.server.close()
+
+# Use throughout app lifetime
+app = Application()
+result1 = app.search("test1")
+result2 = app.search("test2")
+app.shutdown()
+```
+
+## Error Handling
+
+Handle connection failures gracefully:
+
+```python
+from functional_mcp import load_server, MCPConnectionError
+
+try:
+    server = load_server("npx my-server")
+except MCPConnectionError as e:
+    print(f"Failed to connect: {e}")
+    # Fallback strategy
+    server = load_server("python local_backup.py")
+```
+
+Implement retry logic for unreliable connections:
+
+```python
+from time import sleep
+
+def load_with_retry(command: str, max_attempts: int = 3):
+    for attempt in range(max_attempts):
+        try:
+            return load_server(command)
+        except MCPConnectionError:
+            if attempt < max_attempts - 1:
+                sleep(2 ** attempt)  # Exponential backoff
+            else:
+                raise
+
+server = load_with_retry("npx unreliable-server")
+```
+
+## Environment-Specific Configuration
+
+Load different servers based on environment:
+
+```python
+import os
+
+env = os.getenv("ENV", "development")
+
+if env == "production":
+    server = load_server("https://prod-api.example.com/mcp")
+else:
+    server = load_server("python dev_server.py --debug")
+```
+
+Load configuration from files:
+
+```python
+import json
+
+with open("config.json") as f:
+    config = json.load(f)
+
+server = load_server(
+    config["mcp"]["command"],
+    roots=config["mcp"].get("roots"),
+    headers=config["mcp"].get("headers")
+)
+```
+
+## Working with Multiple Servers
+
+Load and use multiple servers simultaneously:
+
+```python
+# Load different servers
+fs = load_server("npx @modelcontextprotocol/server-filesystem /tmp")
+weather = load_server("npx @h1deya/mcp-server-weather")
+db = load_server("python database_server.py")
+
+# Use together in workflows
+files = fs.list_directory(path="/tmp")
+forecast = weather.get_forecast(lat=25.76, lon=-80.19)
+users = db.query(sql="SELECT * FROM users")
+```
+
+Create a server pool for organized management:
+
+```python
+class ServerPool:
+    def __init__(self):
+        self.servers = {}
+
+    def add(self, name: str, command: str):
+        """Add a server to the pool."""
+        self.servers[name] = load_server(command)
+
+    def get(self, name: str):
+        """Get a server by name."""
+        return self.servers[name]
+
+    def close_all(self):
+        """Close all servers."""
+        for server in self.servers.values():
+            if hasattr(server, 'close'):
+                server.close()
+
+# Usage
+pool = ServerPool()
+pool.add("weather", "npx @h1deya/mcp-server-weather")
+pool.add("fs", "npx @modelcontextprotocol/server-filesystem /tmp")
+
+weather = pool.get("weather")
+forecast = weather.get_forecast(lat=25.76, lon=-80.19)
+
+pool.close_all()
+```
+
+## Next Steps
+
+- Learn how to [use tools](/docs/guides/using-tools) once your server is loaded
+- Explore [authentication options](/docs/guides/authentication) in depth
+- Understand [error handling](/docs/guides/error-handling) strategies

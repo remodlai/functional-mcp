@@ -5,7 +5,9 @@ This module provides tool transformation capabilities inspired by FastMCP,
 allowing you to customize tool schemas and behavior without rewriting tools.
 """
 
-from typing import Any, Callable
+from __future__ import annotations
+
+from typing import Any, Callable, Type, Optional
 from pydantic import BaseModel
 
 
@@ -38,13 +40,13 @@ class ArgTransform(BaseModel):
         )
     """
     
-    name: str | None = None
-    description: str | None = None
-    default: Any | None = None
-    default_factory: Callable[[], Any] | None = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    default: Optional[Any] = None
+    default_factory: Optional[Callable[[], Any]] = None
     hide: bool = False
-    required: bool | None = None
-    type: type | None = None
+    required: Optional[bool] = None
+    type: Optional[Type[Any]] = None
     
     model_config = {
         "arbitrary_types_allowed": True
@@ -66,11 +68,11 @@ class ArgTransform(BaseModel):
 
 
 def transform_tool(
-    tool: Callable,
-    name: str | None = None,
-    description: str | None = None,
-    transform_args: dict[str, ArgTransform] | None = None,
-) -> Callable:
+    tool: Callable[..., Any],
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    transform_args: Optional[dict[str, ArgTransform]] = None,
+) -> Callable[..., Any]:
     """
     Create a transformed version of a tool.
     

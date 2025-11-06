@@ -122,19 +122,28 @@ This happens automatically for `int`, `str`, `bool`, and `float` return types.
 
 ## Type Generation
 
-Generate typed interfaces from tool schemas:
+**Status:** ✅ Implemented and tested
+
+Generate typed interfaces from tool schemas using `ToolCollection.generateTypes()`:
 
 ```python
+from functional_mcp import load_server
+
 server = load_server("weather-server")
 
-# Generate Pydantic models
-server.tools.generateTypes(
+# Generate Pydantic models with full validation
+path = server.tools.generateTypes(
     path='./types/weather.py',
-    format='pydantic',
-    only='input',
-    with_instructions=True
+    format='pydantic',        # or 'dataclass', 'typescript'
+    only='input',             # or 'output', None for both
+    with_instructions=True    # Include docstrings from tool descriptions
 )
+
+print(f"Types generated: {path}")
+# → Types generated: /absolute/path/to/types/weather.py
 ```
+
+**Tested with:** 7/7 unit tests passing
 
 ### Steps to Generate Types
 
@@ -159,6 +168,61 @@ server.tools.generateTypes(
    ```
    
    > ✓ Your IDE now has full autocomplete and type checking for all tool parameters.
+
+## Automatic Argument Serialization
+
+**Status:** ✅ Implemented and tested
+
+functional-mcp automatically serializes complex arguments using `pydantic_core.to_json()`. Pass typed objects, dataclasses, Pydantic models, and nested structures directly:
+
+```python
+from dataclasses import dataclass
+from types.weather import GetForecastInput
+
+@dataclass
+class Location:
+    name: str
+    lat: float
+    lon: float
+
+# Complex arguments are automatically serialized
+location = Location(name="Miami", lat=25.76, lon=-80.19)
+
+result = server.analyze_location(
+    location=location,              # Dataclass serialized automatically
+    config={"units": "imperial"},   # Dict serialized to JSON
+    tags=["weather", "forecast"],   # List serialized to JSON
+    city_name="Miami"               # Strings passed unchanged
+)
+```
+
+The client handles serialization using `pydantic_core.to_json()` for consistent formatting. MCP servers can automatically deserialize these JSON strings back to the expected types.
+
+### Serialization Examples
+
+```python
+# Using generated Pydantic types
+from types.api import AnalysisConfig, FilterSpec
+
+config = AnalysisConfig(
+    format="csv",
+    include_headers=True,
+    delimiter=","
+)
+
+filters = [
+    FilterSpec(field="age", operator=">", value=18),
+    FilterSpec(field="status", operator="==", value="active")
+]
+
+result = server.analyze_data(
+    config=config,           # Pydantic model → JSON
+    filters=filters,         # List of Pydantic models → JSON
+    report_title="Analytics" # String unchanged
+)
+```
+
+> 💡 **Tip:** Use generated Pydantic types for both validation and automatic serialization. The types ensure correctness before serialization, and the client handles the JSON conversion transparently.
 
 ### Generated Type Examples
 

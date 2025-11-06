@@ -1,0 +1,121 @@
+---
+title: Introduction
+description: Transform any MCP server into a native Python module automatically
+sidebar_position: 1
+---
+
+# Welcome to functional-mcp
+
+**Every MCP server is a Python module. Automatically.**
+
+```python
+from functional_mcp import load_server
+
+# Any MCP server → Python
+server = load_server("npx -y @modelcontextprotocol/server-filesystem /tmp")
+
+# Call tools
+files = server.list_directory(path="/tmp")
+
+# Or access with metadata
+list_tool = server.tools.list_directory
+print(list_tool.schema.toDict())  # See what it needs
+files = list_tool(path="/tmp")
+```
+
+No learning. No setup. Full transparency.
+
+## What Is This?
+
+MCP servers expose tools, resources, and prompts in a standard format.
+
+**functional-mcp translates that into Python. Instantly.**
+
+```python
+from functional_mcp import load_server
+
+server = load_server("npx your-mcp-server")
+
+# Tools → callable objects with metadata
+search = server.tools.search
+print(search.name)          # "search"
+print(search.description)   # "Search for items..."
+print(search.schema.toDict())  # Full schema as dict
+
+# Call and get hydrated Python objects (not just JSON!)
+result = search(query="test")
+# Returns real Python types:
+#   - datetime objects (not ISO strings)
+#   - UUID objects (not string IDs)
+#   - Pydantic models (not dicts)
+#   - Primitives unwrapped (8 not {"result": 8})
+
+# Resources → attributes
+config = server.CONFIG  # Static resource
+
+# Prompts → template functions
+prompt = server.format_prompt(style="formal")
+```
+
+**Every tool is first-class. Hydrated objects. Full transparency.**
+
+## The Magic
+
+### Before
+
+**Step 1:** Find MCP server
+**Step 2:** Read MCP documentation
+**Step 3:** Learn the protocol
+**Step 4:** Write integration code
+**Step 5:** Handle edge cases
+**Step 6:** Maybe it works
+
+### After
+
+```python
+from functional_mcp import load_server
+server = load_server("the-mcp-server")
+# Done.
+```
+
+**One line. Everything works.**
+
+## Key Features
+
+- 🚀 **Zero Configuration** - Load any MCP server with one function call
+- 🎯 **Full Type Safety** - Auto-generated types for IDE autocomplete
+- 🔧 **First-Class Tools** - Tools are callable objects with complete metadata
+- 🐍 **Pythonic** - Snake case conversion, hydrated objects, intuitive API
+- 🌐 **Universal** - Works with stdio, HTTP, and SSE MCP servers
+- 🤖 **Framework-Agnostic** - Integrates with DSPy, LangChain, Remodl, etc.
+- ⚡ **Async Support** - Full async/await capabilities
+- 🔐 **Built-in Auth** - OAuth, Bearer tokens, custom handlers
+
+## Quick Links
+
+- [Installation](/docs/getting-started/installation) - Get started in seconds
+- [Quickstart](/docs/getting-started/quickstart) - Your first MCP server
+- [Core Concepts](/docs/core-concepts/architecture) - How it works
+- [API Reference](/docs/api/loader) - Complete API documentation
+
+## Philosophy
+
+**MCP servers are the future of service integration.**
+
+They describe tools, resources, and prompts in a standard way.
+
+**functional-mcp makes that future instant.**
+
+No SDK per service. No integration per tool. No learning per API.
+
+**Just Python.**
+
+---
+
+<p align="center">
+  <strong>MCP → Python. Automatically. Universally.</strong>
+</p>
+
+<p align="center">
+  Made with ❤️ by <a href="https://remodl.ai">RemodlAI</a>
+</p>

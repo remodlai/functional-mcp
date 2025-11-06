@@ -4,9 +4,14 @@ Tool mapping: MCP tools → Python callable objects with metadata.
 Each tool is a first-class object with schema, description, and callable interface.
 """
 
-from typing import Any, Callable
+from __future__ import annotations
+
+from typing import Any, Callable, TypeVar, Generic, List
 import inspect
 from pydantic import BaseModel
+import pydantic_core
+
+T = TypeVar('T')
 
 
 class ToolSchema(BaseModel):
@@ -19,8 +24,8 @@ class ToolSchema(BaseModel):
     name: str
     description: str | None = None
     input_schema: dict[str, Any]
-    required_args: list[str]
-    optional_args: list[str]
+    required_args: List[str]
+    optional_args: List[str]
     
     def toDict(self) -> dict[str, Any]:
         """Convert schema to dictionary."""
@@ -170,11 +175,11 @@ class ToolCollection:
         """Get tool by name, return None if not found."""
         return self._tools.get(name)
     
-    def list(self) -> list[str]:
+    def list(self) -> List[str]:
         """List all tool names."""
         return list(self._tools.keys())
     
-    def toList(self) -> list[Callable]:
+    def toList(self) -> List[Callable[..., Any]]:
         """
         Get tools as list of callables for AI SDKs.
         
@@ -255,6 +260,7 @@ def create_tool(
     description: str | None,
     input_schema: dict[str, Any],
     client: Any,
+    meta: dict[str, Any] | None = None,
 ) -> Tool:
     """
     Create a Tool object from MCP tool definition.
@@ -294,8 +300,18 @@ def create_tool(
         
         # Call tool with FastMCP options
         try:
+            # Serialize arguments - convert non-primitive types to JSON strings
+            serialized_args = {}
+            for key, value in kwargs.items():
+                if isinstance(value, (str, int, float, bool, type(None))):
+                    # Pass primitives through unchanged
+                    serialized_args[key] = value
+                else:
+                    # Serialize complex types (dicts, lists, dataclasses, Pydantic models, etc.)
+                    serialized_args[key] = pydantic_core.to_json(value).decode("utf-8")
+            
             # Build call_tool kwargs
-            call_kwargs = {"arguments": kwargs}
+            call_kwargs = {"arguments": serialized_args}
             
             if timeout is not None:
                 call_kwargs["timeout"] = timeout
@@ -354,7 +370,8 @@ def create_tool(
         name=name,
         description=description,
         input_schema=input_schema,
-        executor=sync_executor
+        executor=sync_executor,
+        meta=meta
     )
 
 

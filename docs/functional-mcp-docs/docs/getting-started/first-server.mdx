@@ -1,0 +1,244 @@
+---
+title: Your First MCP Server
+description: A detailed walkthrough of loading and using your first MCP server
+sidebar_position: 3
+---
+
+# Your First MCP Server
+
+This tutorial walks you through loading an MCP server, exploring its capabilities, and using its tools effectively.
+
+## Step 1: Choose an MCP Server
+
+For this tutorial, we'll use the weather MCP server. It provides tools for fetching weather data.
+
+First, make sure you have npx installed (comes with Node.js):
+
+```bash
+# Check if npx is available
+npx --version
+```
+
+## Step 2: Load the Server
+
+Create a new Python file called `weather_example.py`:
+
+```python
+from functional_mcp import load_server
+
+# Load the weather server
+server = load_server("npx -y @h1deya/mcp-server-weather")
+
+print("Weather server loaded successfully!")
+```
+
+Run it:
+
+```bash
+python weather_example.py
+```
+
+## Step 3: Explore Available Tools
+
+Let's see what tools the server provides:
+
+```python
+from functional_mcp import load_server
+
+server = load_server("npx -y @h1deya/mcp-server-weather")
+
+# List all tools
+print("Available tools:")
+for tool_name in server.tools.list():
+    print(f"  - {tool_name}")
+
+# Get detailed info about a specific tool
+forecast_tool = server.tools.get_forecast
+print(f"\nTool: {forecast_tool.name}")
+print(f"Description: {forecast_tool.description}")
+print(f"Required args: {forecast_tool.schema.required_args}")
+print(f"Optional args: {forecast_tool.schema.optional_args}")
+```
+
+Output:
+```
+Available tools:
+  - get_forecast
+
+Tool: get_forecast
+Description: Get weather forecast for a location
+Required args: ['lat', 'lon']
+Optional args: ['units']
+```
+
+## Step 4: Use a Tool
+
+Now let's actually call the tool:
+
+```python
+from functional_mcp import load_server
+
+server = load_server("npx -y @h1deya/mcp-server-weather")
+
+# Get weather forecast for Miami
+result = server.get_forecast(
+    lat=25.76,
+    lon=-80.19,
+    units="metric"  # Optional: Celsius, not Fahrenheit
+)
+
+print(result)
+```
+
+## Step 5: Handle the Response
+
+The result is a hydrated Python object, not raw JSON:
+
+```python
+from functional_mcp import load_server
+
+server = load_server("npx -y @h1deya/mcp-server-weather")
+
+result = server.get_forecast(lat=25.76, lon=-80.19)
+
+# Access the data naturally
+if isinstance(result, dict):
+    print(f"Location: {result.get('location')}")
+    print(f"Temperature: {result.get('temperature')}°")
+    print(f"Conditions: {result.get('conditions')}")
+else:
+    # If it's a Pydantic model
+    print(f"Location: {result.location}")
+    print(f"Temperature: {result.temperature}°")
+```
+
+## Step 6: Add Error Handling
+
+Make it robust with proper error handling:
+
+```python
+from functional_mcp import load_server, MCPToolError, MCPConnectionError
+
+try:
+    server = load_server("npx -y @h1deya/mcp-server-weather")
+
+    result = server.get_forecast(
+        lat=25.76,
+        lon=-80.19,
+        units="metric"
+    )
+
+    print(f"Weather forecast: {result}")
+
+except MCPConnectionError as e:
+    print(f"Failed to connect to weather server: {e}")
+    print("Make sure npx is installed and you have internet access")
+
+except MCPToolError as e:
+    print(f"Weather tool failed: {e}")
+    print(f"Tool name: {e.tool_name}")
+
+except Exception as e:
+    print(f"Unexpected error: {e}")
+```
+
+## Step 7: Explore Tool Metadata
+
+Use metadata to build dynamic applications:
+
+```python
+from functional_mcp import load_server
+
+server = load_server("npx -y @h1deya/mcp-server-weather")
+
+# Get the tool object
+forecast = server.tools.get_forecast
+
+# Convert schema to dict for inspection or AI models
+schema_dict = forecast.schema.toDict()
+print("Schema for AI SDK:")
+print(schema_dict)
+
+# Check specific parameter details
+input_schema = forecast.schema.input_schema
+print("\nParameter details:")
+for param_name, param_info in input_schema.get("properties", {}).items():
+    print(f"  {param_name}: {param_info.get('type')}")
+    print(f"    Description: {param_info.get('description')}")
+```
+
+## Complete Example
+
+Here's a complete, production-ready example:
+
+```python
+from functional_mcp import load_server, MCPToolError, MCPConnectionError
+from typing import Optional
+
+class WeatherService:
+    """A wrapper around the weather MCP server."""
+
+    def __init__(self):
+        try:
+            self.server = load_server("npx -y @h1deya/mcp-server-weather")
+        except MCPConnectionError as e:
+            raise ConnectionError(f"Failed to initialize weather service: {e}")
+
+    def get_forecast(
+        self,
+        lat: float,
+        lon: float,
+        units: str = "metric"
+    ) -> Optional[dict]:
+        """
+        Get weather forecast for coordinates.
+
+        Args:
+            lat: Latitude
+            lon: Longitude
+            units: Temperature units ('metric' or 'imperial')
+
+        Returns:
+            Weather forecast data or None if failed
+        """
+        try:
+            return self.server.get_forecast(lat=lat, lon=lon, units=units)
+        except MCPToolError as e:
+            print(f"Failed to get forecast: {e}")
+            return None
+
+    def close(self):
+        """Clean up server connection."""
+        if hasattr(self.server, 'close'):
+            self.server.close()
+
+# Usage
+if __name__ == "__main__":
+    weather = WeatherService()
+
+    # Get forecast for New York City
+    forecast = weather.get_forecast(lat=40.7128, lon=-74.0060)
+
+    if forecast:
+        print(f"Weather: {forecast}")
+    else:
+        print("Failed to fetch weather")
+
+    weather.close()
+```
+
+## What You Learned
+
+✅ How to load an MCP server with `load_server()`
+✅ How to explore available tools
+✅ How to call tools with arguments
+✅ How to access tool metadata
+✅ How to handle errors properly
+✅ How to build a production-ready wrapper
+
+## Next Steps
+
+- **[Core Concepts](/docs/core-concepts/architecture)** - Understand the architecture
+- **[Using Tools Guide](/docs/guides/using-tools)** - Advanced tool usage patterns
+- **[Error Handling](/docs/guides/error-handling)** - Comprehensive error handling
+- **[Examples](/docs/examples/basic-usage)** - More real-world examples

@@ -1,0 +1,528 @@
+---
+title: Tool System
+description: Deep dive into functional-mcp's three-tier tool architecture
+sidebar_position: 2
+---
+
+# Tool System
+
+The tool system is the heart of functional-mcp. It transforms MCP tools into first-class Python objects with complete metadata and type safety.
+
+## Three-Tier Architecture
+
+functional-mcp uses a three-layer approach for maximum flexibility:
+
+```
+ToolSchema (Pure Metadata)
+    ↓
+Tool (Callable Object with Metadata)
+    ↓
+ToolCollection (Container & Registry)
+```
+
+### Layer 1: ToolSchema
+
+Pure metadata without execution logic.
+
+```python
+class ToolSchema:
+    """Pure metadata about a tool."""
+
+    name: str                    # Tool identifier
+    description: str             # Human-readable description
+    input_schema: dict           # JSON Schema for arguments
+    required_args: List[str]     # Required parameter names
+    optional_args: List[str]     # Optional parameter names
+
+    def toDict(self) -> dict:
+        """Convert to dict for AI SDKs"""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self.input_schema
+        }
+
+    def to_dict(self) -> dict:
+        """Alias for toDict()"""
+        return self.toDict()
+```
+
+**When to use:** When you need metadata without execution (UI generation, documentation, introspection)
+
+### Layer 2: Tool
+
+Callable object that combines metadata with execution.
+
+```python
+class Tool:
+    """A callable tool with metadata."""
+
+    name: str                    # Tool name
+    description: str             # Description
+    instructions: str            # Alias for description
+    schema: ToolSchema           # Complete schema
+    tags: List[str]              # Tags from _fastmcp metadata
+    meta: Dict[str, Any]         # Full FastMCP metadata
+
+    def __call__(self, **kwargs) -> Any:
+        """
+        Execute the tool.
+
+        1. Validates required arguments
+        2. Serializes complex types (Pydantic → JSON)
+        3. Calls FastMCP client.call_tool()
+        4. Returns hydrated Python objects
+        """
+        ...
+```
+
+**Key Features:**
+
+**1. Validation**
+```python
+search = server.tools.search
+
+# Missing required arg
+search()  # Raises MCPValidationError
+```
+
+**2. Serialization**
+```python
+from pydantic import BaseModel
+
+class User(BaseModel):
+    name: str
+    email: str
+
+# Pydantic models → JSON strings automatically
+result = server.create_user(user=User(name="Alice", email="alice@example.com"))
+```
+
+**3. Hydration**
+```python
+# Returns actual Python objects
+result = server.get_user(id="123")
+
+result.created_at  # datetime object, not string
+result.user_id     # UUID object, not string
+result.metadata    # dict with nested objects
+```
+
+### Layer 3: ToolCollection
+
+Container for all tools with multiple access patterns.
+
+```python
+class ToolCollection:
+    """Container for server tools."""
+
+    def __getattr__(self, name: str) -> Tool:
+        """Access tool by attribute: tools.search"""
+
+    def get(self, name: str) -> Optional[Tool]:
+        """Safely get tool or None"""
+
+    def list(self) -> List[str]:
+        """List all tool names"""
+
+    def toList(self) -> List[Callable]:
+        """Convert to list of callables for AI SDKs"""
+
+    def generateTypes(
+        self,
+        path: str,
+        format: str = "pydantic",
+        only: Optional[str] = None,
+        with_instructions: bool = True
+    ) -> None:
+        """Generate type definitions from schemas"""
+
+    def __iter__(self):
+        """Iterate over tools"""
+
+    def __len__(self):
+        """Get tool count"""
+```
+
+## Access Patterns
+
+### Pattern 1: Direct Method Call
+
+Simplest approach - call tool as a method:
+
+```python
+server = load_server("npx my-server")
+
+# Direct call
+result = server.search(query="test", limit=10)
+```
+
+**When to use:** Quick scripts, simple use cases, no need for metadata
+
+### Pattern 2: Tool Object Access
+
+Access the Tool object for metadata:
+
+```python
+# Get tool object
+search_tool = server.tools.search
+
+# Inspect metadata
+print(search_tool.name)         # "search"
+print(search_tool.description)  # "Search for items..."
+print(search_tool.schema.required_args)  # ["query"]
+
+# Then call it
+result = search_tool(query="test")
+```
+
+**When to use:** Need metadata, building UIs, introspection
+
+### Pattern 3: ToolCollection Methods
+
+Use ToolCollection helper methods:
+
+```python
+# List all tools
+for tool_name in server.tools.list():
+    print(tool_name)
+
+# Get tool safely
+search = server.tools.get("search")
+if search:
+    result = search(query="test")
+
+# Convert to list for AI SDKs
+tools_list = server.tools.toList()
+```
+
+**When to use:** Dynamic tool discovery, AI frameworks, iteration
+
+### Pattern 4: Schema Export
+
+Export schemas for AI frameworks:
+
+```python
+# Get schema as dict
+schema = server.tools.search.schema.toDict()
+
+# Use with AI SDK
+from anthropic import Anthropic
+client = Anthropic()
+
+response = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    tools=[server.tools.search.schema.toDict()],
+    messages=[...]
+)
+```
+
+**When to use:** Integrating with Claude, OpenAI, etc.
+
+## Metadata Exposure
+
+Every tool exposes rich metadata:
+
+### Basic Metadata
+
+```python
+tool = server.tools.search
+
+# Names and description
+tool.name                  # "search"
+tool.description           # "Search for items in the database"
+tool.instructions          # Alias for description
+```
+
+### Schema Details
+
+```python
+# Access schema
+schema = tool.schema
+
+# Parameter details
+schema.required_args       # ["query"]
+schema.optional_args       # ["limit", "offset"]
+
+# Full JSON Schema
+schema.input_schema        # Complete schema dict
+```
+
+### Tags and Metadata
+
+```python
+# Tags from FastMCP metadata
+tool.tags                  # ["search", "query", "database"]
+
+# Full FastMCP metadata
+tool.meta                  # {"_fastmcp": {...}}
+```
+
+### Schema Conversion
+
+```python
+# For AI SDKs
+schema_dict = tool.schema.toDict()
+# Returns:
+{
+    "name": "search",
+    "description": "Search for items...",
+    "input_schema": {
+        "type": "object",
+        "properties": {...},
+        "required": [...]
+    }
+}
+```
+
+## Type Safety
+
+Tools provide full type safety through JSON Schema conversion:
+
+### IDE Autocomplete
+
+```python
+# Your IDE autocompletes parameters
+server.search(
+    query="test",  # ← IDE knows this is required (str)
+    limit=10       # ← IDE knows this is optional (int)
+)
+```
+
+### Runtime Validation
+
+```python
+from functional_mcp import MCPValidationError
+
+try:
+    # Missing required argument
+    server.search(limit=10)  # Missing 'query'
+except MCPValidationError as e:
+    print(e.errors)  # {"query": "required"}
+```
+
+### Type Hints
+
+Tools generate proper type hints:
+
+```python
+def search(
+    self,
+    query: str,
+    limit: int = 10,
+    offset: int = 0
+) -> dict[str, Any]:
+    ...
+```
+
+## Argument Handling
+
+### Required vs Optional
+
+```python
+tool = server.tools.search
+
+# Check which args are required
+print(tool.schema.required_args)  # ["query"]
+print(tool.schema.optional_args)  # ["limit", "offset"]
+
+# Call with only required args
+result = tool(query="test")
+
+# Call with optional args
+result = tool(query="test", limit=20, offset=10)
+```
+
+### Complex Types
+
+functional-mcp handles complex types automatically:
+
+**Pydantic Models:**
+```python
+from pydantic import BaseModel
+
+class SearchFilter(BaseModel):
+    categories: list[str]
+    min_price: float
+
+# Automatically serialized to JSON
+result = server.search(
+    query="test",
+    filter=SearchFilter(categories=["books"], min_price=10.0)
+)
+```
+
+**Dataclasses:**
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Filter:
+    categories: list[str]
+
+result = server.search(
+    query="test",
+    filter=Filter(categories=["books"])
+)
+```
+
+**Nested Objects:**
+```python
+result = server.create_user(
+    user={
+        "name": "Alice",
+        "profile": {
+            "age": 30,
+            "location": "NYC"
+        },
+        "tags": ["developer", "python"]
+    }
+)
+```
+
+## Response Hydration
+
+Results are hydrated into Python objects:
+
+### Datetime Hydration
+
+```python
+result = server.get_user(id="123")
+
+# Before hydration: "2024-01-15T10:30:00Z"
+# After hydration:
+result["created_at"]  # datetime(2024, 1, 15, 10, 30, 0)
+```
+
+### UUID Hydration
+
+```python
+# Before: "550e8400-e29b-41d4-a716-446655440000"
+# After:
+result["user_id"]  # UUID object
+```
+
+### Pydantic Model Hydration
+
+```python
+from pydantic import BaseModel
+
+class User(BaseModel):
+    name: str
+    email: str
+
+# If schema matches, you get a Pydantic model
+result = server.get_user(id="123")
+isinstance(result, User)  # True
+```
+
+### Primitive Unwrapping
+
+```python
+# Before: {"result": 8}
+# After:
+result = server.calculate(x=5, y=3)
+result  # Just 8, not {"result": 8}
+```
+
+## AI Framework Integration
+
+Tools are designed for seamless AI framework integration:
+
+### Claude SDK
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic()
+server = load_server("npx my-server")
+
+response = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    tools=[tool.schema.toDict() for tool in server.tools],
+    messages=[{"role": "user", "content": "Search for books"}]
+)
+```
+
+### LangChain
+
+```python
+from langchain import create_tool
+
+server = load_server("npx my-server")
+tools = server.tools.toList()
+
+chain = prompt | model | tools
+```
+
+### DSPy
+
+```python
+import dspy
+
+server = load_server("npx my-server")
+react = dspy.ReAct(Signature, tools=server.tools.toList())
+```
+
+### Remodl
+
+```python
+from remodl.agents import create_agent
+
+server = load_server("npx my-server")
+agent = create_agent(tools=server.tools)
+```
+
+## Best Practices
+
+### 1. Use Metadata for Dynamic UIs
+
+```python
+def generate_form(tool: Tool):
+    """Generate HTML form from tool schema."""
+    form = f"<form><h2>{tool.name}</h2>"
+
+    for arg in tool.schema.required_args:
+        form += f'<input name="{arg}" required />'
+
+    for arg in tool.schema.optional_args:
+        form += f'<input name="{arg}" />'
+
+    form += "</form>"
+    return form
+```
+
+### 2. Validate Before Calling
+
+```python
+def safe_call(tool: Tool, args: dict):
+    """Safely call tool with validation."""
+    # Check required args
+    for arg in tool.schema.required_args:
+        if arg not in args:
+            raise ValueError(f"Missing required arg: {arg}")
+
+    # Call tool
+    return tool(**args)
+```
+
+### 3. Use Tags for Organization
+
+```python
+def get_tools_by_tag(server, tag: str) -> List[Tool]:
+    """Find all tools with a specific tag."""
+    return [
+        getattr(server.tools, name)
+        for name in server.tools.list()
+        if tag in getattr(server.tools, name).tags
+    ]
+
+# Get all search-related tools
+search_tools = get_tools_by_tag(server, "search")
+```
+
+## Next Steps
+
+- **[Dynamic Generation](/docs/core-concepts/dynamic-generation)** - How classes are created
+- **[Using Tools Guide](/docs/guides/using-tools)** - Practical tool usage patterns
+- **[Tool Transformation](/docs/advanced/tool-transformation)** - Customize tool behavior

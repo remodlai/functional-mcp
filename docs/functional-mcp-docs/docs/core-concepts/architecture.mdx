@@ -1,0 +1,356 @@
+---
+title: Architecture Overview
+description: Understand how functional-mcp transforms MCP servers into Python modules
+sidebar_position: 1
+---
+
+# Architecture Overview
+
+functional-mcp uses dynamic class generation and intelligent type mapping to transform any MCP server into a native Python module. This page explains how it works under the hood.
+
+## High-Level Data Flow
+
+```
+MCP Server (any type)
+    ↓
+FastMCP Client Connection (auto-detects transport)
+    ↓
+Dynamic Class Generation (server.py)
+    ↓
+Python Module with Full IDE Support
+```
+
+## Core Components
+
+### 1. Loader Module (`loader.py`)
+
+The entry point that orchestrates the entire process.
+
+**What it does:**
+- Detects the transport type from the command/URL
+- Initializes the appropriate FastMCP client
+- Queries server capabilities (tools, resources, prompts)
+- Delegates to class generation
+- Returns the ready-to-use server object
+
+**Transport Detection:**
+```python
+# URLs → StreamableHttpTransport
+load_server("https://api.example.com/mcp")
+
+# "npx ..." → NpxStdioTransport
+load_server("npx @modelcontextprotocol/server-filesystem /tmp")
+
+# "python ..." → PythonStdioTransport
+load_server("python my_server.py")
+
+# Other commands → StdioTransport
+load_server("./my-binary --serve")
+```
+
+### 2. Client Wrapper (`client.py`)
+
+Provides a sync/async bridge around FastMCP's async-only client.
+
+**Key Pattern: Async-to-Sync Bridge**
+
+```python
+class MCPClientWrapper:
+    def run_async(self, coro):
+        """Run async coroutine synchronously"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def call_tool(self, name, arguments):
+        """Sync wrapper for async tool call"""
+        return self.run_async(
+            self.client.call_tool(name, arguments)
+        )
+```
+
+This allows users to write synchronous code while functional-mcp handles async FastMCP calls internally.
+
+### 3. Server Class Generator (`server.py`)
+
+Creates Python classes dynamically using `type()`.
+
+**What it generates:**
+
+```python
+# Input: MCP server with tools, resources, prompts
+create_server_class(
+    name="WeatherServer",
+    tools=[...],
+    resources=[...],
+    prompts=[...]
+)
+
+# Output: Dynamically generated class
+class WeatherServer:
+    # Methods for each tool
+    def get_forecast(self, lat, lon, units="metric"):
+        ...
+
+    # ToolCollection for metadata access
+    tools = ToolCollection({
+        "get_forecast": Tool(...)
+    })
+
+    # Properties for resources
+    @property
+    def CONFIG(self):
+        ...
+
+    # Functions for prompts
+    def format_prompt(self, style):
+        ...
+```
+
+### 4. Tool System (`tools.py`)
+
+Three-tier architecture for tools:
+
+**ToolSchema** → Pure metadata
+```python
+class ToolSchema:
+    name: str
+    description: str
+    input_schema: dict  # JSON Schema
+    required_args: List[str]
+    optional_args: List[str]
+```
+
+**Tool** → Callable object with metadata
+```python
+class Tool:
+    name: str
+    schema: ToolSchema
+    tags: List[str]
+
+    def __call__(self, **kwargs):
+        # Validate, serialize, execute
+        ...
+```
+
+**ToolCollection** → Container for all tools
+```python
+class ToolCollection:
+    def __getattr__(self, name) -> Tool:
+        # Access by attribute: server.tools.search
+
+    def list() -> List[str]:
+        # List all tool names
+
+    def toList() -> List[Callable]:
+        # For AI SDKs
+```
+
+### 5. Type System (`schema.py`)
+
+Bidirectional conversion between JSON Schema and Python types:
+
+```python
+# JSON Schema → Python Type
+json_schema_to_python_type({
+    "type": "string"
+}) → str
+
+json_schema_to_python_type({
+    "type": "array",
+    "items": {"type": "integer"}
+}) → list[int]
+
+# Python Type → JSON Schema
+python_type_to_json_schema(str) → {
+    "type": "string"
+}
+
+python_type_to_json_schema(list[int]) → {
+    "type": "array",
+    "items": {"type": "integer"}
+}
+```
+
+This enables IDE autocomplete and type checking.
+
+## Design Patterns
+
+### Pattern 1: Metadata-First Design
+
+Every tool carries complete metadata:
+
+```python
+tool = server.tools.search
+
+# Metadata is always accessible
+tool.name                    # "search"
+tool.description             # Full description
+tool.schema.toDict()         # Complete JSON schema
+tool.tags                    # ["search", "query"]
+
+# But it's also callable
+result = tool(query="test")  # Execute the tool
+```
+
+This enables:
+- IDE autocomplete
+- AI SDK introspection
+- Type generation
+- Dynamic UIs
+
+### Pattern 2: Dual Access Pattern
+
+Tools can be accessed two ways:
+
+```python
+# Direct method call (simple)
+server.search(query="test")
+
+# Via ToolCollection (with metadata)
+server.tools.search.schema.toDict()
+server.tools.search(query="test")
+```
+
+Use direct calls for quick scripts, ToolCollection for metadata-aware applications.
+
+### Pattern 3: Hydrated Objects
+
+Results are real Python objects, not JSON strings:
+
+```python
+# Instead of:
+{
+    "created_at": "2024-01-15T10:30:00Z",  # String
+    "user_id": "550e8400-e29b-41d4-a716-446655440000"  # String
+}
+
+# You get:
+{
+    "created_at": datetime(2024, 1, 15, 10, 30, 0),  # datetime object
+    "user_id": UUID("550e8400-e29b-41d4-a716-446655440000")  # UUID object
+}
+```
+
+### Pattern 4: Snake Case Conversion
+
+MCP tools often use camelCase. functional-mcp converts to Python convention:
+
+```python
+# MCP tool: getWeatherForecast
+# Python method: get_weather_forecast
+
+server.get_weather_forecast(lat=25, lon=-80)
+```
+
+## Lifecycle
+
+### 1. Initialization
+
+```python
+server = load_server("npx my-server")
+```
+
+**What happens:**
+1. Parse command to detect transport
+2. Create FastMCP client with transport
+3. Start server process (if stdio)
+4. Initialize MCP connection
+5. List tools, resources, prompts
+6. Generate dynamic class
+7. Return server instance
+
+### 2. Tool Execution
+
+```python
+result = server.search(query="test")
+```
+
+**What happens:**
+1. Method called on server instance
+2. Arguments validated against schema
+3. Complex types serialized (Pydantic → JSON)
+4. `client.call_tool()` invoked
+5. FastMCP sends MCP request
+6. Server processes and responds
+7. Response hydrated (JSON → Python objects)
+8. Result returned
+
+### 3. Cleanup
+
+```python
+# Automatically handled when object is deleted
+del server  # or script ends
+```
+
+**What happens:**
+1. Client close() called
+2. Server process terminated (if stdio)
+3. Resources cleaned up
+
+## Module Relationships
+
+```
+loader.py (entry point)
+  ├── imports: server.py, registry.py, exceptions.py
+  ├── creates: FastMCP Client
+  └── delegates: create_server_class()
+
+server.py (dynamic class generation)
+  ├── imports: tools.py, schema.py
+  ├── creates: Tool objects, ToolCollection
+  └── generates: Dynamic class at runtime
+
+tools.py (tool system)
+  ├── defines: Tool, ToolCollection, ToolSchema
+  ├── imports: schema.py (for type conversion)
+  ├── delegates: codegen.py (for generateTypes())
+  └── calls: client.call_tool() (via executor)
+
+schema.py (type conversion)
+  ├── bidirectional JSON Schema ↔ Python types
+  └── used by: tools.py, codegen.py, stubs.py
+
+client.py (FastMCP wrapper)
+  ├── async-to-sync bridge
+  └── called by: all modules needing MCP operations
+```
+
+## Key Insights
+
+### Why Dynamic Class Generation?
+
+Each MCP server is unique. Pre-defined classes would be inflexible and require manual updates for every server.
+
+Dynamic generation means:
+- ✅ Works with **any** MCP server
+- ✅ No manual schema definitions
+- ✅ Automatic type safety
+- ✅ Always in sync with server
+
+### Why Async-to-Sync Bridge?
+
+FastMCP is async-only (built on async MCP protocol). But most Python code is synchronous.
+
+The bridge provides:
+- ✅ Clean sync API for users
+- ✅ Compatibility with sync frameworks
+- ✅ Small performance cost (acceptable tradeoff)
+- ✅ Async version available (`aload_server()`)
+
+### Why Three-Tier Tool System?
+
+Separating ToolSchema, Tool, and ToolCollection provides:
+- ✅ Clear separation of concerns
+- ✅ Metadata without execution coupling
+- ✅ Flexible access patterns
+- ✅ AI SDK compatibility
+
+## Next Steps
+
+- **[Tool System Deep Dive](/docs/core-concepts/tool-system)** - Understand tools in detail
+- **[Dynamic Generation](/docs/core-concepts/dynamic-generation)** - How classes are created
+- **[Transport Detection](/docs/core-concepts/transport-detection)** - How servers are connected
