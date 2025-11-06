@@ -6,7 +6,7 @@ Every MCP server becomes native Python. Automatically.
 
 __version__ = "0.1.0"
 
-from .loader import load_server, load, aload_server, aload
+from .loader import load_server, load_server_with_config, load, aload_server, aload
 from .registry import register
 from .config import create_config, load_config, StdioConfig
 from .transformation import ArgTransform, transform_tool
@@ -21,6 +21,7 @@ from .exceptions import (
 __all__ = [
     # Core (primary API)
     "load_server",
+    "load_server_with_config",
     "aload_server",
     
     # Compatibility aliases

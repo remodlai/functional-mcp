@@ -1,23 +1,22 @@
 """
 Core MCP client wrapper.
 
-Wraps FastMCP Client and manages connection lifecycle.
+Manages MCP client connection lifecycle and sync/async bridging.
 """
 
 from typing import Any
 import asyncio
-from fastmcp.client import Client as FastMCPClient
+from fastmcp.client import Client as _MCPClient
 
 
 class MCPClientWrapper:
     """
-    Wrapper around FastMCP Client for sync/async bridge.
+    MCP client wrapper for sync/async operations.
     
-    Provides both sync and async interfaces to the underlying
-    FastMCP client.
+    Provides both sync and async interfaces to the underlying client.
     """
     
-    def __init__(self, client: FastMCPClient):
+    def __init__(self, client: _MCPClient):
         self.client = client
         self._loop = None
     

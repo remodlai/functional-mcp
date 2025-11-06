@@ -34,7 +34,7 @@ def create_server_class(
         tools: List of MCP tool definitions
         resources: List of MCP resource definitions
         prompts: List of MCP prompt definitions
-        client: FastMCP Client instance
+        client: MCP Client instance
         sampling_handler: Handler for LLM requests
         elicitation_handler: Handler for user input
     

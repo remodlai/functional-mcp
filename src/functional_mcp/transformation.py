@@ -1,8 +1,8 @@
 """
-Tool transformation using FastMCP patterns.
+Tool transformation for MCP tools.
 
-This module provides tool transformation capabilities inspired by FastMCP,
-allowing you to customize tool schemas and behavior without rewriting tools.
+Allows customizing tool schemas and behavior without rewriting tools.
+Supports hiding arguments, renaming, setting defaults, and changing descriptions.
 """
 
 from typing import Any, Callable, Type as PyType
@@ -12,8 +12,6 @@ from pydantic import BaseModel
 class ArgTransform(BaseModel):
     """
     Transformation specification for a tool argument.
-    
-    Inspired by FastMCP's ArgTransform but adapted for functional-mcp.
     
     Args:
         name: Rename the argument

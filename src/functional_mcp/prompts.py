@@ -13,7 +13,7 @@ def create_prompt_function(prompt: Any, client: Any) -> callable:
     
     Args:
         prompt: MCP prompt definition
-        client: FastMCP client
+        client: MCP client
     
     Returns:
         Function that returns formatted prompt

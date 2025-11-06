@@ -1,11 +1,9 @@
 """
-Event loop runner for sync API over async FastMCP Client.
+Event loop runner for sync API over async operations.
 
 Provides AsyncRunner which creates a background event loop thread
 for running async operations synchronously. Works in both normal Python
 and Jupyter environments.
-
-Based on mcp2py's pattern but adapted for FastMCP.
 """
 
 import asyncio

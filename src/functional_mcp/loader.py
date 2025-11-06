@@ -1,8 +1,8 @@
 """
 Main entry point for loading MCP servers.
 
-Uses FastMCP Client to connect to MCP servers and creates
-dynamic Python modules with tools as methods.
+Connects to MCP servers and creates dynamic Python modules
+with tools as methods, resources as properties, prompts as functions.
 """
 
 import asyncio
@@ -174,8 +174,154 @@ async def aload_server(
     return load(command, **kwargs)
 
 
+def load_server_with_config(
+    command: str,
+    config: "StdioConfig | str",
+) -> Any:
+    """
+    Load an MCP server with transport configuration.
+    
+    Use when server requires specific environment variables, working directory,
+    or other transport options. Config must match transport type detected from
+    command (npx config for npx commands, python config for python commands).
+    
+    Args:
+        command: Server command or registered name. Examples:
+            - "npx @org/server" (uses NpxStdioTransport)
+            - "python server.py" (uses PythonStdioTransport)
+            - "node server.js" (uses StdioTransport)
+        
+        config: StdioConfig object or saved config name. Config must have
+            matching transport_type. Examples:
+            - StdioConfig object from create_config().init()
+            - "prod" (loads from ~/.config/functional-mcp/configs/prod.json)
+    
+    Returns:
+        Dynamic server object with:
+            - .tools: ToolCollection for name-based access
+            - Tool methods (e.g., server.search(...))
+            - Resources/prompts if server supports them
+    
+    Raises:
+        MCPConnectionError: If connection fails
+        FileNotFoundError: If config name doesn't exist
+    
+    Example:
+        # Create and save config
+        config = (create_config("prod", transport_type="python")
+                 .add_env("API_KEY").with_value(os.getenv("PROD_KEY"))
+                 .add_env("DB_HOST").with_value("prod.db.com")
+                 .cwd("/app")
+                 .init())
+        config.save()
+        
+        # Use saved config
+        server = load_server_with_config("python server.py", "prod")
+        tools = server.tools
+        
+    Note:
+        MCP servers run in isolated environments. Environment variables from
+        your shell are NOT inherited - they must be explicitly passed via config.
+        This is an MCP protocol security feature.
+    """
+    from .config import StdioConfig, load_config as load_stdio_config
+    
+    # Load config if string
+    if isinstance(config, str):
+        config = load_stdio_config(config)
+    
+    # Check registry
+    registered = get_server_command(command)
+    if registered:
+        command = registered
+    
+    # Create transport with config kwargs
+    transport_kwargs = config.to_transport_kwargs()
+    
+    if command.startswith("npx"):
+        parts = command.split()
+        package_idx = 1
+        while package_idx < len(parts) and parts[package_idx].startswith("-"):
+            package_idx += 1
+        package = parts[package_idx] if package_idx < len(parts) else ""
+        args = parts[package_idx + 1:]
+        
+        transport = NpxStdioTransport(
+            package=package,
+            args=args,
+            **transport_kwargs
+        )
+    elif command.startswith("python"):
+        parts = command.split()
+        script = parts[1] if len(parts) > 1 else command
+        
+        transport = PythonStdioTransport(
+            script_path=script,
+            **transport_kwargs
+        )
+    else:
+        # Generic stdio
+        parts = command.split()
+        cmd = parts[0]
+        args = parts[1:]
+        
+        transport = StdioTransport(
+            command=cmd,
+            args=args,
+            **transport_kwargs
+        )
+    
+    # Create client
+    client = Client(transport)
+    
+    # Use standard load_server flow (without config parameter)
+    runner = AsyncRunner()
+    
+    try:
+        async def _init():
+            async with client:
+                init_result = client.initialize_result
+                tools_result = await client.list_tools()
+                
+                try:
+                    resources_result = await client.list_resources()
+                except:
+                    resources_result = []
+                
+                try:
+                    prompts_result = await client.list_prompts()
+                except:
+                    prompts_result = []
+                
+                return {
+                    "server_info": init_result.serverInfo if init_result else type('obj', (), {"name": "Unknown"})(),
+                    "tools": tools_result,
+                    "resources": resources_result,
+                    "prompts": prompts_result,
+                }
+        
+        capabilities = runner.run(_init())
+        
+    except Exception as e:
+        runner.close()
+        raise MCPConnectionError(f"Connection failed: {e}") from e
+    
+    # Create server class
+    server_class = create_server_class(
+        name=capabilities["server_info"].name,
+        tools=capabilities["tools"],
+        resources=capabilities["resources"],
+        prompts=capabilities["prompts"],
+        client=client,
+        sampling_handler=None,
+        elicitation_handler=None,
+    )
+    
+    return server_class()
+
+
 # Compatibility aliases
 load = load_server
 aload = aload_server
 
-__all__ = ["load_server", "aload_server", "load", "aload"]
+__all__ = ["load_server", "load_server_with_config", "aload_server", "load", "aload"]

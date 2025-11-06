@@ -13,7 +13,7 @@ def create_resource_property(resource: Any, client: Any) -> property:
     
     Args:
         resource: MCP resource definition
-        client: FastMCP client
+        client: MCP client
     
     Returns:
         Property that fetches resource when accessed
