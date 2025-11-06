@@ -73,14 +73,20 @@ def create_server_class(
         "_prompts_map": {},
     }
     
-    # Add tools as methods
-    for tool in tools:
-        tool_name = tool.name
-        method_name = to_snake_case(tool_name)
+    # Add tools as direct methods (server.search(...))
+    for method_name, tool_obj in tool_objects.items():
+        # Closure to capture tool_obj
+        def make_method(tool):
+            def method(self, **kwargs):
+                return tool(**kwargs)
+            method.__name__ = tool.name
+            method.__doc__ = tool.description
+            return method
         
-        # Store original tool
-        class_dict["_tools_map"][method_name] = tool
-        
+        class_dict[method_name] = make_method(tool_obj)
+    
+    # Skip old method creation code below
+    if False:
         # Create method
         def create_tool_method(t):
             @wraps(lambda: None)  # Placeholder for proper wrapping

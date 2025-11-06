@@ -4,7 +4,7 @@ Tool mapping: MCP tools → Python callable objects with metadata.
 Each tool is a first-class object with schema, description, and callable interface.
 """
 
-from typing import Any, Callable
+from typing import Any, Callable, List
 import inspect
 from pydantic import BaseModel
 
@@ -140,7 +140,7 @@ class ToolCollection:
         """List all tool names."""
         return list(self._tools.keys())
     
-    def toList(self) -> list[Callable]:
+    def toList(self) -> List[Callable]:
         """
         Get tools as list of callables for AI SDKs.
         

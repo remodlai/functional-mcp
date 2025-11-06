@@ -16,6 +16,7 @@ from fastmcp.client.transports import (
     NpxStdioTransport,
 )
 
+from .event_loop import AsyncRunner
 from .server import create_server_class
 from .registry import get_server_command
 from .exceptions import MCPConnectionError
@@ -68,7 +69,7 @@ def load_server(
         transport = StreamableHttpTransport(
             url=command,
             headers=headers or {},
-            timeout=timeout
+
         )
     elif command.startswith("npx"):
         transport = NpxStdioTransport(command=command)
@@ -92,32 +93,44 @@ def load_server(
     else:
         elicitation_handler = None
     
+    # Create background runner
+    runner = AsyncRunner()
+    
     # Initialize connection and get server capabilities
     try:
         # Connect and initialize
         async def _init():
             async with client:
-                # Initialize server
-                init_result = await client.initialize()
+                # Context manager auto-initializes
+                init_result = client.initialize_result
                 
-                # List tools, resources, prompts
+                # List tools
                 tools_result = await client.list_tools()
-                resources_result = await client.list_resources()
-                prompts_result = await client.list_prompts()
+                
+                # Try resources (optional)
+                try:
+                    resources_result = await client.list_resources()
+                except:
+                    resources_result = []
+                
+                # Try prompts (optional)
+                try:
+                    prompts_result = await client.list_prompts()
+                except:
+                    prompts_result = []
                 
                 return {
-                    "server_info": init_result.server_info,
-                    "tools": tools_result.tools,
-                    "resources": resources_result.resources if resources_result else [],
-                    "prompts": prompts_result.prompts if prompts_result else [],
+                    "server_info": init_result.serverInfo if init_result else type('obj', (), {"name": "Unknown"})(),
+                    "tools": tools_result,
+                    "resources": resources_result,
+                    "prompts": prompts_result,
                 }
         
-        # Run async initialization
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        capabilities = loop.run_until_complete(_init())
+        # Run using AsyncRunner
+        capabilities = runner.run(_init())
         
     except Exception as e:
+        runner.close()
         raise MCPConnectionError(f"Failed to connect to server: {e}") from e
     
     # Create dynamic server class
