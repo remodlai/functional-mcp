@@ -23,7 +23,7 @@ from .sampling import create_sampling_handler
 from .elicitation import create_elicitation_handler
 
 
-def load(
+def load_server(
     command: str,
     *,
     headers: dict[str, str] | None = None,
@@ -135,7 +135,7 @@ def load(
     return server_class()
 
 
-async def aload(
+async def aload_server(
     command: str,
     **kwargs: Any,
 ) -> Any:
@@ -161,4 +161,8 @@ async def aload(
     return load(command, **kwargs)
 
 
-__all__ = ["load", "aload"]
+# Compatibility aliases
+load = load_server
+aload = aload_server
+
+__all__ = ["load_server", "aload_server", "load", "aload"]

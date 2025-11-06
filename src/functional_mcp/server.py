@@ -7,6 +7,7 @@ resources become properties, and prompts become template functions.
 
 from typing import Any, Callable
 from functools import wraps
+from .tools import create_tool, ToolCollection
 
 
 def create_server_class(
@@ -21,8 +22,12 @@ def create_server_class(
     """
     Generate a dynamic server class with tools/resources/prompts.
     
-    Tools become methods, resources become properties/constants,
-    prompts become template functions.
+    Tools become:
+    - Methods on server (server.search(...))
+    - ToolCollection (server.tools.search with metadata)
+    
+    Resources become properties/constants.
+    Prompts become template functions.
     
     Args:
         name: Server name
@@ -44,13 +49,28 @@ def create_server_class(
         s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
         return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
     
+    # Create Tool objects with metadata
+    tool_objects = {}
+    for tool in tools:
+        tool_name = to_snake_case(tool.name)
+        tool_obj = create_tool(
+            name=tool.name,
+            description=tool.description,
+            input_schema=tool.inputSchema or {},
+            client=client
+        )
+        tool_objects[tool_name] = tool_obj
+    
+    # Create ToolCollection
+    tool_collection = ToolCollection(tool_objects)
+    
     # Create class dict
     class_dict = {
         "_client": client,
-        "_tools_map": {},
+        "_tool_collection": tool_collection,
+        "tools": tool_collection,  # Direct access to ToolCollection
         "_resources_map": {},
         "_prompts_map": {},
-        "tools": [],  # For AI SDK integration
     }
     
     # Add tools as methods

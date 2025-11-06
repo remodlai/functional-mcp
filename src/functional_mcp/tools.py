@@ -1,111 +1,215 @@
 """
-Tool mapping: MCP tools → Python callable functions.
+Tool mapping: MCP tools → Python callable objects with metadata.
 
-Handles type conversion, validation, and execution.
+Each tool is a first-class object with schema, description, and callable interface.
 """
 
 from typing import Any, Callable
 import inspect
+from pydantic import BaseModel
 
 
-def create_tool_function(
-    tool: Any,
-    client: Any,
-    name: str | None = None,
-) -> Callable:
+class ToolSchema(BaseModel):
     """
-    Create a Python function from an MCP tool definition.
+    Schema for a tool's inputs and outputs.
+    
+    Provides clean access to tool metadata.
+    """
+    
+    name: str
+    description: str | None = None
+    input_schema: dict[str, Any]
+    required_args: list[str]
+    optional_args: list[str]
+    
+    def toDict(self) -> dict[str, Any]:
+        """Convert schema to dictionary."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": self.input_schema,
+            "required": self.required_args,
+            "optional": self.optional_args,
+        }
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Alias for toDict()."""
+        return self.toDict()
+
+
+class Tool:
+    """
+    Wrapper for an MCP tool with metadata and callable interface.
+    
+    Attributes:
+        name: Tool name
+        description: Tool description
+        schema: ToolSchema object
+        instructions: Usage instructions (from description)
+    
+    Example:
+        tools = server.tools
+        search = tools.search
+        
+        print(search.name)         # "search"
+        print(search.description)  # "Search for items..."
+        print(search.schema.toDict())  # Full schema
+        
+        result = search(query="test")  # Call it
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        description: str | None,
+        input_schema: dict[str, Any],
+        executor: Callable,
+    ):
+        self.name = name
+        self.description = description or f"MCP tool: {name}"
+        self.instructions = self.description  # Alias
+        self._executor = executor
+        
+        # Parse schema
+        properties = input_schema.get("properties", {})
+        required = set(input_schema.get("required", []))
+        
+        self.schema = ToolSchema(
+            name=name,
+            description=description,
+            input_schema=input_schema,
+            required_args=list(required),
+            optional_args=[k for k in properties.keys() if k not in required]
+        )
+    
+    def __call__(self, **kwargs) -> Any:
+        """Execute the tool."""
+        return self._executor(**kwargs)
+    
+    def __repr__(self) -> str:
+        return f"Tool(name='{self.name}', required={self.schema.required_args})"
+
+
+class ToolCollection:
+    """
+    Collection of tools with name-based access.
+    
+    Allows accessing tools by name as attributes instead of iterating by index.
+    
+    Example:
+        tools = server.tools
+        
+        # Access by name (not index!)
+        search = tools.search
+        upload = tools.upload_file
+        
+        # List all
+        for tool in tools:
+            print(tool.name)
+        
+        # Get by name
+        tool = tools.get("search")
+    """
+    
+    def __init__(self, tools: dict[str, Tool]):
+        self._tools = tools
+    
+    def __getattr__(self, name: str) -> Tool:
+        """Access tool by name."""
+        if name.startswith("_"):
+            raise AttributeError(f"No attribute '{name}'")
+        
+        if name in self._tools:
+            return self._tools[name]
+        
+        raise AttributeError(f"No tool named '{name}'. Available: {list(self._tools.keys())}")
+    
+    def __iter__(self):
+        """Iterate over tools."""
+        return iter(self._tools.values())
+    
+    def __len__(self):
+        """Number of tools."""
+        return len(self._tools)
+    
+    def get(self, name: str) -> Tool | None:
+        """Get tool by name, return None if not found."""
+        return self._tools.get(name)
+    
+    def list(self) -> list[str]:
+        """List all tool names."""
+        return list(self._tools.keys())
+    
+    def toList(self) -> list[Callable]:
+        """
+        Get tools as list of callables for AI SDKs.
+        
+        For frameworks that expect list of functions (DSPy, LangChain).
+        """
+        return [tool._executor for tool in self._tools.values()]
+    
+    def __repr__(self) -> str:
+        return f"ToolCollection({len(self._tools)} tools: {self.list()})"
+
+
+def create_tool(
+    name: str,
+    description: str | None,
+    input_schema: dict[str, Any],
+    client: Any,
+) -> Tool:
+    """
+    Create a Tool object from MCP tool definition.
     
     Args:
-        tool: MCP tool object
-        client: FastMCP client instance
-        name: Override function name
+        name: Tool name
+        description: Tool description
+        input_schema: JSON schema for inputs
+        client: MCP client for execution
     
     Returns:
-        Callable Python function with proper signature
+        Tool object
     """
-    func_name = name or tool.name
-    
-    # Parse input schema to create function signature
-    input_schema = tool.inputSchema or {}
     properties = input_schema.get("properties", {})
     required = set(input_schema.get("required", []))
     
-    # Build function
-    async def tool_fn(**kwargs) -> dict[str, Any]:
+    # Create executor function
+    async def executor(**kwargs) -> dict[str, Any]:
         """Execute MCP tool."""
         # Validate required args
         missing = required - set(kwargs.keys())
         if missing:
             from .exceptions import MCPValidationError
             raise MCPValidationError(
-                tool.name,
+                name,
                 f"Missing required arguments: {missing}",
                 {"missing": list(missing)}
             )
         
-        # Call tool via client
+        # Call tool
         try:
-            result = await client.call_tool(tool.name, kwargs)
+            result = await client.call_tool(name, kwargs)
             return result.content
         except Exception as e:
             from .exceptions import MCPToolError
-            raise MCPToolError(tool.name, str(e), e) from e
+            raise MCPToolError(name, str(e), e) from e
     
-    # Set metadata
-    tool_fn.__name__ = func_name
-    tool_fn.__doc__ = tool.description or f"MCP tool: {tool.name}"
+    # Make sync wrapper for easier use
+    def sync_executor(**kwargs):
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(executor(**kwargs))
+        finally:
+            loop.close()
     
-    # Add type hints (basic version)
-    # TODO: Generate full type hints from JSON schema
-    
-    return tool_fn
+    return Tool(
+        name=name,
+        description=description,
+        input_schema=input_schema,
+        executor=sync_executor
+    )
 
 
-def generate_tool_signature(tool: Any) -> inspect.Signature:
-    """
-    Generate inspect.Signature for a tool from its JSON schema.
-    
-    Args:
-        tool: MCP tool object
-    
-    Returns:
-        Python signature object
-    """
-    input_schema = tool.inputSchema or {}
-    properties = input_schema.get("properties", {})
-    required = set(input_schema.get("required", []))
-    
-    parameters = []
-    
-    for param_name, param_schema in properties.items():
-        # Determine type
-        param_type = param_schema.get("type", "string")
-        python_type = {
-            "string": str,
-            "number": float,
-            "integer": int,
-            "boolean": bool,
-            "array": list,
-            "object": dict,
-        }.get(param_type, Any)
-        
-        # Determine default
-        if param_name in required:
-            default = inspect.Parameter.empty
-        else:
-            default = param_schema.get("default", None)
-        
-        parameters.append(
-            inspect.Parameter(
-                param_name,
-                inspect.Parameter.KEYWORD_ONLY,
-                default=default,
-                annotation=python_type
-            )
-        )
-    
-    return inspect.Signature(parameters, return_annotation=dict[str, Any])
-
-
-__all__ = ["create_tool_function", "generate_tool_signature"]
+__all__ = ["Tool", "ToolCollection", "ToolSchema", "create_tool"]

@@ -1,14 +1,15 @@
 """
 functional-mcp: Turn any MCP server into a Python module
 
-Like mcp2py, but built on FastMCP with tool transformation support.
+Every MCP server becomes native Python. Automatically.
 """
 
 __version__ = "0.1.0"
 
-from .loader import load, aload
+from .loader import load_server, load, aload_server, aload
 from .registry import register
 from .transformation import ArgTransform, transform_tool
+from .tools import Tool, ToolCollection, ToolSchema
 from .exceptions import (
     MCPConnectionError,
     MCPToolError,
@@ -17,14 +18,23 @@ from .exceptions import (
 )
 
 __all__ = [
-    # Core
+    # Core (primary API)
+    "load_server",
+    "aload_server",
+    
+    # Compatibility aliases
     "load",
     "aload",
     
     # Registry
     "register",
     
-    # Transformation (enhancement over mcp2py)
+    # Tools (with metadata)
+    "Tool",
+    "ToolCollection", 
+    "ToolSchema",
+    
+    # Transformation (enhancement)
     "ArgTransform",
     "transform_tool",
     
